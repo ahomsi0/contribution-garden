@@ -1,0 +1,730 @@
+.garden-portal {
+  --portal-pine: #0d1511;
+  --portal-bone: #f3f0e7;
+  --portal-mist: #b9c8c2;
+  --portal-sage: #91a68c;
+  --portal-gold: #c7a36a;
+  position: relative;
+  width: 100%;
+  height: 100svh;
+  min-height: 640px;
+  overflow: hidden;
+  isolation: isolate;
+  color: var(--portal-bone);
+  background: var(--portal-pine);
+}
+
+.garden-portal__world {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+}
+
+.garden-portal__hero {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  overflow: hidden;
+  background: #4b5c55;
+  transition: opacity 820ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.garden-portal.is-garden .garden-portal__hero {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.garden-portal__image,
+.garden-portal__veil {
+  position: absolute;
+  inset: 0;
+}
+
+.garden-portal__image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 54% center;
+  animation: garden-portal-breathe 18s ease-in-out infinite alternate;
+}
+
+.garden-portal__veil {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(9, 15, 12, 0.88) 0%,
+      rgba(9, 15, 12, 0.74) 27%,
+      rgba(9, 15, 12, 0.22) 58%,
+      rgba(9, 15, 12, 0.08) 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(8, 13, 10, 0.34) 0%,
+      transparent 34%,
+      rgba(8, 13, 10, 0.13) 67%,
+      rgba(8, 13, 10, 0.64) 100%
+    );
+}
+
+.garden-portal__header {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  min-height: 78px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 clamp(24px, 4.2vw, 72px);
+  border-bottom: 1px solid rgba(243, 240, 231, 0.16);
+}
+
+.garden-portal__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.garden-portal__brand-name {
+  font-family: var(--font-newsreader), "Iowan Old Style", serif;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.garden-portal__brand-note,
+.garden-portal__edition {
+  color: rgba(243, 240, 231, 0.58);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.garden-portal__content {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: clamp(24px, 6.4vw, 108px);
+  width: min(600px, calc(100vw - 48px));
+  transform: translateY(-45%);
+  transition:
+    opacity 320ms ease,
+    transform 320ms ease;
+}
+
+.garden-portal.is-loading .garden-portal__content {
+  transform: translateY(calc(-45% - 7px));
+}
+
+.garden-portal__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 22px;
+  color: rgba(243, 240, 231, 0.7);
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.garden-portal__eyebrow span {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(199, 163, 106, 0.55);
+  border-radius: 50%;
+  color: var(--portal-gold);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+}
+
+.garden-portal__content h1 {
+  max-width: 590px;
+  margin: 0;
+  color: var(--portal-bone);
+  font-family: var(--font-newsreader), "Iowan Old Style", serif;
+  font-size: clamp(58px, 6.2vw, 96px);
+  font-weight: 440;
+  letter-spacing: -0.052em;
+  line-height: 0.92;
+  text-wrap: balance;
+}
+
+.garden-portal__content h1 em {
+  color: #e5c894;
+  font-weight: 380;
+}
+
+.garden-portal__lede {
+  max-width: 510px;
+  margin: 26px 0 0;
+  color: rgba(243, 240, 231, 0.76);
+  font-size: 16px;
+  line-height: 1.58;
+  text-wrap: pretty;
+}
+
+.garden-portal__entry {
+  width: min(500px, 100%);
+  margin-top: 34px;
+}
+
+.garden-portal__entry > label {
+  display: block;
+  margin-bottom: 9px;
+  color: rgba(243, 240, 231, 0.56);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.garden-portal__entry-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) auto;
+  gap: 9px;
+}
+
+.garden-portal__username {
+  display: flex;
+  min-width: 0;
+  height: 52px;
+  align-items: center;
+  border: 1px solid rgba(243, 240, 231, 0.22);
+  padding: 0 15px;
+  color: var(--portal-gold);
+  background: rgba(9, 15, 12, 0.76);
+  box-shadow: 0 16px 48px rgba(3, 7, 4, 0.2);
+}
+
+.garden-portal__username:focus-within {
+  border-color: rgba(229, 200, 148, 0.76);
+}
+
+.garden-portal__username input {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  padding: 0 0 0 7px;
+  color: var(--portal-bone);
+  background: transparent;
+  font-size: 14px;
+}
+
+.garden-portal__entry button {
+  display: flex;
+  min-width: 184px;
+  height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border: 1px solid var(--portal-bone);
+  padding: 0 18px;
+  color: var(--portal-pine);
+  background: var(--portal-bone);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 640;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.garden-portal__entry button:hover:not(:disabled) {
+  border-color: #e5c894;
+  background: #e5c894;
+  transform: translateY(-2px);
+}
+
+.garden-portal__entry button:disabled {
+  cursor: wait;
+}
+
+.garden-portal__hint,
+.garden-portal__error {
+  margin: 9px 0 0;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.garden-portal__hint {
+  color: rgba(243, 240, 231, 0.44);
+}
+
+.garden-portal__error {
+  color: #f0c19d;
+}
+
+.garden-portal__legend {
+  position: absolute;
+  z-index: 2;
+  right: clamp(24px, 4.2vw, 72px);
+  bottom: 31px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(110px, 1fr));
+  gap: 28px;
+}
+
+.garden-portal__legend div {
+  min-width: 112px;
+  border-top: 1px solid rgba(243, 240, 231, 0.24);
+  padding-top: 9px;
+}
+
+.garden-portal__legend span,
+.garden-portal__legend strong {
+  display: block;
+}
+
+.garden-portal__legend span {
+  color: rgba(243, 240, 231, 0.48);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.garden-portal__legend strong {
+  margin-top: 4px;
+  color: rgba(243, 240, 231, 0.88);
+  font-family: var(--font-newsreader), "Iowan Old Style", serif;
+  font-size: 15px;
+  font-weight: 450;
+}
+
+.garden-portal__loading-line {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(243, 240, 231, 0.08);
+}
+
+.garden-portal__loading-line span {
+  display: block;
+  width: 34%;
+  height: 100%;
+  background: var(--portal-gold);
+  animation: garden-portal-load 1.45s ease-in-out infinite;
+}
+
+.garden-portal__overview {
+  position: absolute;
+  z-index: 24;
+  bottom: 23px;
+  left: 21px;
+  display: flex;
+  height: 34px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(243, 240, 231, 0.2);
+  border-radius: 18px;
+  padding: 0 13px;
+  color: rgba(243, 240, 231, 0.8);
+  background: rgba(13, 21, 17, 0.78);
+  cursor: pointer;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition:
+    color 180ms ease,
+    background 180ms ease;
+}
+
+.garden-portal__overview:hover {
+  color: var(--portal-bone);
+  background: rgba(13, 21, 17, 0.96);
+}
+
+@keyframes garden-portal-breathe {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.025);
+  }
+}
+
+@keyframes garden-portal-load {
+  0% {
+    transform: translateX(-105%);
+  }
+  50% {
+    transform: translateX(105%);
+  }
+  100% {
+    transform: translateX(305%);
+  }
+}
+
+@media (max-width: 960px) {
+  .garden-portal__edition {
+    display: none;
+  }
+
+  .garden-portal__content {
+    left: clamp(24px, 5vw, 48px);
+    width: min(560px, calc(100vw - 48px));
+  }
+
+  .garden-portal__legend {
+    right: 24px;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 720px) {
+  .garden-portal {
+    min-height: 600px;
+  }
+
+  .garden-portal__image img {
+    object-position: 68% center;
+  }
+
+  .garden-portal__veil {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(8, 13, 10, 0.38) 0%,
+        rgba(8, 13, 10, 0.1) 28%,
+        rgba(8, 13, 10, 0.66) 58%,
+        rgba(8, 13, 10, 0.94) 100%
+      ),
+      linear-gradient(90deg, rgba(8, 13, 10, 0.32), rgba(8, 13, 10, 0.04));
+  }
+
+  .garden-portal__header {
+    min-height: 66px;
+    padding: 0 20px;
+  }
+
+  .garden-portal__brand {
+    display: block;
+  }
+
+  .garden-portal__brand-name {
+    display: block;
+    font-size: 18px;
+  }
+
+  .garden-portal__brand-note {
+    display: block;
+    margin-top: 2px;
+    font-size: 7px;
+  }
+
+  .garden-portal__content {
+    top: auto;
+    right: 20px;
+    bottom: 114px;
+    left: 20px;
+    width: auto;
+    transform: none;
+  }
+
+  .garden-portal.is-loading .garden-portal__content {
+    transform: translateY(-5px);
+  }
+
+  .garden-portal__eyebrow {
+    margin-bottom: 15px;
+    font-size: 10px;
+  }
+
+  .garden-portal__eyebrow span {
+    width: 24px;
+    height: 24px;
+    font-size: 8px;
+  }
+
+  .garden-portal__content h1 {
+    max-width: 500px;
+    font-size: clamp(46px, 13vw, 64px);
+    line-height: 0.94;
+  }
+
+  .garden-portal__lede {
+    max-width: 440px;
+    margin-top: 18px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .garden-portal__entry {
+    margin-top: 23px;
+  }
+
+  .garden-portal__entry-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .garden-portal__username,
+  .garden-portal__entry button {
+    height: 48px;
+  }
+
+  .garden-portal__entry button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .garden-portal__legend {
+    right: 20px;
+    bottom: 20px;
+    left: 20px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  .garden-portal__legend div {
+    min-width: 0;
+  }
+
+  .garden-portal__legend strong {
+    font-size: 12px;
+  }
+
+  .garden-portal__overview {
+    top: 76px;
+    bottom: auto;
+    left: 14px;
+  }
+}
+
+@media (max-height: 760px) and (min-width: 721px) {
+  .garden-portal__content {
+    transform: translateY(-42%);
+  }
+
+  .garden-portal__content h1 {
+    font-size: clamp(52px, 5.6vw, 78px);
+  }
+
+  .garden-portal__lede {
+    margin-top: 18px;
+  }
+
+  .garden-portal__entry {
+    margin-top: 22px;
+  }
+}
+
+@media (max-height: 760px) and (max-width: 720px) {
+  .garden-portal__content {
+    bottom: 96px;
+  }
+
+  .garden-portal__eyebrow,
+  .garden-portal__lede {
+    display: none;
+  }
+
+  .garden-portal__entry {
+    margin-top: 18px;
+  }
+
+  .garden-portal__legend {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .garden-portal__image img,
+  .garden-portal__loading-line span {
+    animation: none;
+  }
+
+  .garden-portal__hero {
+    transition-duration: 100ms;
+  }
+}
+
+/* Original voxel field-notes system: square silhouettes, stepped color, hard depth. */
+.garden-portal {
+  --block-panel: rgba(11, 19, 14, 0.88);
+  --block-panel-2: #18271c;
+  --block-edge: rgba(243, 240, 231, 0.28);
+  --block-shadow: rgba(3, 8, 5, 0.78);
+  --block-active: #c9d88b;
+  --block-sun: #e0b96e;
+}
+
+.garden-portal__veil {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(8, 14, 10, 0.94) 0 30%,
+      rgba(8, 14, 10, 0.76) 30% 43%,
+      rgba(8, 14, 10, 0.28) 43% 62%,
+      rgba(8, 14, 10, 0.08) 62% 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(8, 14, 10, 0.34) 0 16%,
+      transparent 16% 70%,
+      rgba(8, 14, 10, 0.72) 70% 100%
+    );
+}
+
+.garden-portal__header {
+  border-bottom: 2px solid var(--block-edge);
+}
+
+.garden-portal__eyebrow span,
+.garden-portal__username,
+.garden-portal__entry button,
+.garden-portal__overview {
+  border-radius: 0;
+}
+
+.garden-portal__eyebrow span {
+  border-width: 2px;
+  background: var(--block-panel-2);
+  box-shadow: 3px 3px 0 var(--block-shadow);
+}
+
+.garden-portal__content h1 {
+  text-shadow: 3px 3px 0 rgba(4, 9, 6, 0.54);
+}
+
+.garden-portal__content h1 em {
+  color: var(--block-sun);
+  font-style: normal;
+  text-decoration: underline;
+  text-decoration-thickness: 4px;
+  text-underline-offset: 7px;
+}
+
+.garden-portal__entry > label,
+.garden-portal__hint,
+.garden-portal__error,
+.garden-portal__brand-note,
+.garden-portal__edition {
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.garden-portal__username {
+  border: 2px solid var(--block-edge);
+  background: var(--block-panel);
+  box-shadow: 4px 4px 0 var(--block-shadow);
+}
+
+.garden-portal__username:focus-within {
+  border-color: var(--block-sun);
+  box-shadow: 4px 4px 0 #5d4727;
+}
+
+.garden-portal__entry button {
+  border: 2px solid var(--portal-bone);
+  box-shadow: 4px 4px 0 var(--block-shadow);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease,
+    background 120ms ease;
+}
+
+.garden-portal__entry button:hover:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--block-shadow);
+}
+
+.garden-portal__entry button:active:not(:disabled) {
+  transform: translate(4px, 4px);
+  box-shadow: none;
+}
+
+.garden-portal__legend {
+  gap: 12px;
+}
+
+.garden-portal__legend div {
+  border-top: 3px solid var(--block-edge);
+  padding: 10px 12px;
+  background: rgba(11, 19, 14, 0.62);
+  box-shadow: 4px 4px 0 rgba(3, 8, 5, 0.5);
+}
+
+.garden-portal__legend div:nth-child(1) {
+  border-color: #d9c35f;
+}
+
+.garden-portal__legend div:nth-child(2) {
+  border-color: #8fbd75;
+}
+
+.garden-portal__legend div:nth-child(3) {
+  border-color: #b47b57;
+}
+
+.garden-portal__legend span {
+  font-size: 10px;
+}
+
+.garden-portal__legend strong {
+  font-family: var(--font-geist-sans), sans-serif;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.garden-portal__loading-line {
+  height: 4px;
+}
+
+.garden-portal__loading-line span {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--block-sun) 0 10px,
+    transparent 10px 14px
+  );
+  animation-timing-function: steps(8, end);
+}
+
+.garden-portal__overview {
+  min-height: 40px;
+  border-width: 2px;
+  box-shadow: 3px 3px 0 var(--block-shadow);
+}
+
+@media (max-width: 720px) {
+  .garden-portal__veil {
+    background:
+      linear-gradient(
+        180deg,
+        rgba(8, 14, 10, 0.34) 0 20%,
+        rgba(8, 14, 10, 0.08) 20% 48%,
+        rgba(8, 14, 10, 0.9) 48% 100%
+      ),
+      linear-gradient(90deg, rgba(8, 14, 10, 0.26), transparent 72%);
+  }
+
+  .garden-portal__legend {
+    display: none;
+  }
+
+  .garden-portal__username,
+  .garden-portal__entry button {
+    min-height: 52px;
+  }
+
+  .garden-portal__content h1 {
+    font-size: clamp(42px, 12vw, 58px);
+    text-shadow: 2px 2px 0 rgba(4, 9, 6, 0.58);
+  }
+}
