@@ -376,9 +376,11 @@ async function fetchGraphQL<T>(
       const status =
         /bad credentials|requires authentication|authentication token/i.test(message)
           ? 401
-          : firstError?.type === "RATE_LIMITED" || /rate limit/i.test(message)
-            ? 429
-            : 502;
+          : firstError?.type === "NOT_FOUND"
+            ? 404
+            : firstError?.type === "RATE_LIMITED" || /rate limit/i.test(message)
+              ? 429
+              : 502;
       logger.warn("github_graphql_errors_payload", {
         mappedStatus: status,
         type: firstError?.type ?? null,

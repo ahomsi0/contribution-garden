@@ -240,6 +240,44 @@ test("loads and caches public gardens with one server-side OAuth App credential"
   }
 });
 
+test("maps a missing GitHub account to a not-found response", async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreEnvironment = setTestEnvironment({
+    GITHUB_OAUTH_CLIENT_ID: "garden-oauth-client",
+    GITHUB_OAUTH_CLIENT_SECRET: "garden-oauth-secret",
+    GITHUB_TOKEN: undefined,
+  });
+
+  globalThis.fetch = async () =>
+    Response.json({
+      errors: [
+        {
+          type: "NOT_FOUND",
+          message: "Could not resolve to a User with the login of missing-garden-user.",
+        },
+      ],
+    });
+
+  try {
+    const app = await worker();
+    const response = await app.fetch(
+      new Request("http://localhost/api/github/missing-garden-user", {
+        headers: { accept: "application/json" },
+      }),
+      environment,
+      context,
+    );
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), {
+      error: "GitHub could not find @missing-garden-user.",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnvironment();
+  }
+});
+
 test("reports a disconnected OAuth session when GitHub App OAuth is unconfigured", async () => {
   const app = await worker();
   const response = await app.fetch(

@@ -229,6 +229,43 @@ a:focus-visible {
   pointer-events: none;
 }
 
+.garden-error-state {
+  position: absolute;
+  z-index: 22;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: min(520px, calc(100vw - 40px));
+  gap: 8px;
+  padding: 22px 24px;
+  border: 1px solid rgba(243, 240, 231, 0.26);
+  border-radius: 4px;
+  color: var(--cg-cream, #f3f0e7);
+  background: rgba(13, 21, 17, 0.94);
+  box-shadow: 8px 8px 0 rgba(3, 8, 5, 0.42);
+  transform: translate(-50%, -50%);
+}
+
+.garden-error-state strong {
+  font-family: var(--font-newsreader), "Iowan Old Style", serif;
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.garden-error-state span,
+.garden-error-state small {
+  color: rgba(243, 240, 231, 0.72);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.garden-error-state small {
+  color: rgba(243, 240, 231, 0.52);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

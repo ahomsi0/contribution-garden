@@ -821,7 +821,7 @@ export function GardenScene({
           gl.toneMappingExposure = timeOfDay === "night" ? 1.04 : 1.08;
         }}
         onPointerMissed={() => onSelect?.(null)}
-        shadows={quality !== "low"}
+        shadows={quality !== "low" ? "percentage" : false}
         style={{ width: "100%", height: "100%", touchAction: "none" }}
       >
         <Suspense fallback={null}>
@@ -4227,7 +4227,7 @@ function WeatherSystem({
           seed={seed + 2}
         />
       ) : null}
-      {weather === "snow" || (season === "winter" && weather !== "rain") ? (
+      {weather === "snow" ? (
         <WeatherParticles
           color="#f3fbff"
           count={Math.round(310 * density)}
@@ -4245,7 +4245,7 @@ function WeatherSystem({
           seed={seed + 4}
         />
       ) : null}
-      {season === "autumn" && weather !== "rain" ? (
+      {season === "autumn" && (weather === "sunny" || weather === "wind") ? (
         <WeatherParticles
           color={palette.flowers[0]}
           count={Math.round(65 * density)}

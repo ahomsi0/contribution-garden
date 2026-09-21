@@ -188,6 +188,7 @@ export default function ContributionGarden({
     username,
     data,
     status,
+    error,
     season,
     weather,
     timeOfDay,
@@ -197,6 +198,7 @@ export default function ContributionGarden({
     soundEnabled,
     selected,
     setUsername,
+    clearData,
     setData,
     setStatus,
     setSeason,
@@ -282,6 +284,7 @@ export default function ContributionGarden({
     const controller = new AbortController();
     activeGardenRequest.current = controller;
     setStatus("loading");
+    clearData();
     setSelected(null);
 
     async function loadGarden() {
@@ -337,6 +340,7 @@ export default function ContributionGarden({
     };
   }, [
     setData,
+    clearData,
     setSelected,
     setStatus,
     onReady,
@@ -929,6 +933,22 @@ export default function ContributionGarden({
           >
             <div className="garden-loading__mark" />
             <span className="sr-only">Growing {username}&apos;s garden…</span>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {status === "error" && !data && error ? (
+          <motion.div
+            className="garden-error-state"
+            role="alert"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+          >
+            <strong>The garden could not be grown</strong>
+            <span>{error}</span>
+            <small>Try another GitHub username from the search field.</small>
           </motion.div>
         ) : null}
       </AnimatePresence>

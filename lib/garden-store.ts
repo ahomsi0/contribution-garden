@@ -30,6 +30,7 @@ interface GardenState {
   soundEnabled: boolean;
   selected: SelectedGardenEntity | null;
   setUsername: (username: string) => void;
+  clearData: () => void;
   setData: (data: GitHubGardenData) => void;
   setStatus: (status: GardenState["status"], error?: string | null) => void;
   setSeason: (season: Season) => void;
@@ -56,6 +57,7 @@ export const useGardenStore = create<GardenState>((set) => ({
   soundEnabled: false,
   selected: null,
   setUsername: (username) => set({ username }),
+  clearData: () => set({ data: null }),
   setData: (data) => set({ data, status: "ready", error: null }),
   setStatus: (status, error = null) => set({ status, error }),
   setSeason: (season) => set({ season }),
