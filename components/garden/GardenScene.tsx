@@ -4219,10 +4219,9 @@ function WeatherSystem({
     <group>
       {timeOfDay === "night" ? <StarField count={Math.round(240 * density)} seed={seed + 1} /> : null}
       {weather === "rain" ? (
-        <WeatherParticles
+        <RainStreaks
           color="#b8dce2"
-          count={Math.round(520 * density)}
-          mode="rain"
+          count={Math.round(420 * density)}
           reducedMotion={reducedMotion}
           seed={seed + 2}
         />
@@ -4261,7 +4260,78 @@ function WeatherSystem({
   );
 }
 
-type WeatherParticleMode = "rain" | "snow" | "wind" | "leaves";
+function RainStreaks({
+  color,
+  count,
+  reducedMotion,
+  seed,
+}: {
+  color: string;
+  count: number;
+  reducedMotion: boolean;
+  seed: number;
+}) {
+  const lines = useRef<THREE.LineSegments>(null);
+  const positions = useMemo(() => {
+    const random = seededRandom(seed);
+    const values = new Float32Array(count * 6);
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 6;
+      const x = (random() - 0.5) * 20;
+      const y = 0.4 + random() * 12;
+      const z = (random() - 0.5) * 20;
+      const length = 0.8 + random() * 0.7;
+      values[offset] = x;
+      values[offset + 1] = y;
+      values[offset + 2] = z;
+      values[offset + 3] = x + 0.08;
+      values[offset + 4] = y - length;
+      values[offset + 5] = z + 0.03;
+    }
+    return values;
+  }, [count, seed]);
+
+  useFrame((_, delta) => {
+    if (!lines.current || reducedMotion) return;
+    const attribute = lines.current.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const values = attribute.array as Float32Array;
+
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 6;
+      const speed = delta * (8.5 + (index % 7) * 0.48);
+      values[offset] += delta * 0.75;
+      values[offset + 1] -= speed;
+      values[offset + 3] += delta * 0.75;
+      values[offset + 4] -= speed;
+
+      if (values[offset + 4] < -0.25) {
+        const length = values[offset + 1] - values[offset + 4];
+        const resetY = 11.5 + (index % 5) * 0.25;
+        values[offset + 1] = resetY;
+        values[offset + 4] = resetY - length;
+      }
+    }
+
+    attribute.needsUpdate = true;
+  });
+
+  return (
+    <lineSegments ref={lines} frustumCulled={false}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <lineBasicMaterial
+        color={color}
+        depthWrite={false}
+        opacity={0.78}
+        toneMapped={false}
+        transparent
+      />
+    </lineSegments>
+  );
+}
+
+type WeatherParticleMode = "snow" | "wind" | "leaves";
 
 function WeatherParticles({
   color,
@@ -4296,11 +4366,7 @@ function WeatherParticles({
 
     for (let index = 0; index < count; index += 1) {
       const offset = index * 3;
-      if (mode === "rain") {
-        values[offset] += delta * 0.75;
-        values[offset + 1] -= delta * (8.5 + (index % 7) * 0.48);
-        if (values[offset + 1] < -0.25) values[offset + 1] = 11.5;
-      } else if (mode === "snow") {
+      if (mode === "snow") {
         values[offset] += Math.sin(time * 0.5 + index) * delta * 0.25;
         values[offset + 1] -= delta * (0.44 + (index % 5) * 0.07);
         values[offset + 2] += Math.cos(time * 0.35 + index * 0.9) * delta * 0.18;
@@ -4319,7 +4385,7 @@ function WeatherParticles({
     attribute.needsUpdate = true;
   });
 
-  const size = mode === "rain" ? 0.055 : mode === "snow" ? 0.14 : mode === "leaves" ? 0.11 : 0.075;
+  const size = mode === "snow" ? 0.14 : mode === "leaves" ? 0.11 : 0.075;
   return (
     <points ref={points} frustumCulled={false}>
       <bufferGeometry>
@@ -4328,7 +4394,7 @@ function WeatherParticles({
       <pointsMaterial
         color={color}
         depthWrite={false}
-        opacity={mode === "rain" ? 0.48 : 0.72}
+        opacity={0.72}
         size={size}
         sizeAttenuation
         transparent
