@@ -225,7 +225,9 @@ export default function ContributionGarden({
   const [sceneKey, setSceneKey] = useState(0);
   const [isWalking, setIsWalking] = useState(false);
   const [walkInput, setWalkInput] = useState<GardenWalkInput>(emptyWalkInput);
-  const [hasEnteredWorld, setHasEnteredWorld] = useState(false);
+  // The overview should open on the live 3D garden immediately after the
+  // visitor enters. Walking remains an optional first-person mode.
+  const [hasEnteredWorld, setHasEnteredWorld] = useState(true);
   const [interactiveSceneReady, setInteractiveSceneReady] = useState(false);
   const hasInitialized = useRef(false);
   const activeGardenRequest = useRef<AbortController | null>(null);
