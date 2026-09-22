@@ -78,7 +78,7 @@ test("server-renders the Contribution Garden shell", async () => {
 
   const html = await response.text();
   assert.match(html, /Contribution Garden/);
-  assert.match(html, /A living GitHub ecosystem/i);
+  assert.match(html, /A living GitHub and GitLab ecosystem/i);
   assert.match(html, /Enter the garden/i);
   assert.match(html, /garden-hero-v4-voxel\.webp/);
   assert.match(html, /og-v2\.png/);
@@ -115,6 +115,83 @@ test("serves the disconnected browser path without an Authorization header", asy
   assert.ok(data.metrics.totalContributions > 1_000);
   assert.ok(data.languages.length >= 4);
   assert.ok(data.repositories.length >= 8);
+});
+
+test("loads and caches a public GitLab garden through the normalized contract", async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreEnvironment = setTestEnvironment({
+    GITLAB_BASE_URL: "https://gitlab.test",
+    GITLAB_TOKEN: undefined,
+  });
+  const today = new Date().toISOString().slice(0, 10);
+  let calls = 0;
+
+  globalThis.fetch = async (input) => {
+    calls += 1;
+    const url = String(input);
+    if (url.includes("/api/v4/users?")) {
+      return Response.json([
+        {
+          id: 42,
+          username: "garden.user",
+          name: "GitLab Garden",
+          avatar_url: "https://gitlab.test/avatar.png",
+          web_url: "https://gitlab.test/garden.user",
+        },
+      ]);
+    }
+    if (url.includes("/api/v4/users/42/projects?")) {
+      return Response.json([
+        {
+          id: 7,
+          name: "seedling",
+          name_with_namespace: "Garden Garden / seedling",
+          path_with_namespace: "garden.user/seedling",
+          web_url: "https://gitlab.test/garden.user/seedling",
+          description: "A small project.",
+          star_count: 4,
+          forks_count: 1,
+          archived: false,
+          last_activity_at: "2026-09-20T12:00:00.000Z",
+        },
+      ]);
+    }
+    if (url.includes("/users/garden.user/calendar.json")) {
+      return Response.json({ [today]: 6 });
+    }
+    if (url.includes("/api/v4/projects/7/languages")) {
+      return Response.json({ TypeScript: 70, CSS: 30 });
+    }
+    throw new Error(`Unexpected GitLab request: ${url}`);
+  };
+
+  try {
+    const app = await worker();
+    const request = () =>
+      new Request("http://localhost/api/gitlab/garden.user", {
+        headers: { accept: "application/json" },
+      });
+    const firstResponse = await app.fetch(request(), environment, context);
+    assert.equal(firstResponse.status, 200);
+    assert.equal(firstResponse.headers.get("x-contribution-garden-source"), "gitlab");
+    assert.equal(firstResponse.headers.get("x-contribution-garden-cache"), "miss");
+
+    const firstData = await firstResponse.json();
+    assert.equal(firstData.source, "gitlab");
+    assert.equal(firstData.profile.login, "garden.user");
+    assert.equal(firstData.metrics.totalContributions, 6);
+    assert.equal(firstData.repositories[0].name, "seedling");
+    assert.equal(firstData.languages[0].name, "TypeScript");
+    assert.equal(firstData.calendar.length, 365);
+
+    const secondResponse = await app.fetch(request(), environment, context);
+    assert.equal(secondResponse.status, 200);
+    assert.equal(secondResponse.headers.get("x-contribution-garden-cache"), "hit");
+    assert.equal(calls, 4);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnvironment();
+  }
 });
 
 test("loads and caches public gardens with one server-side OAuth App credential", async () => {

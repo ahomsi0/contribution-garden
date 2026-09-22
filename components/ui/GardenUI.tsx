@@ -54,6 +54,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { GardenProvider } from "@/lib/garden-provider";
 import type { GitHubDataSource } from "@/lib/github-types";
 
 import "./garden-ui.css";
@@ -97,7 +98,7 @@ export interface GardenProfile {
   avatarUrl?: string | null;
   bio?: string | null;
   location?: string | null;
-  githubUrl?: string | null;
+  profileUrl?: string | null;
   joinedYear?: number | null;
   followers?: number;
   repositories?: number;
@@ -173,6 +174,8 @@ export interface GardenUIProps {
   children?: ReactNode;
   onSearchValueChange?: (value: string) => void;
   onSearch?: (username: string) => void;
+  provider?: GardenProvider;
+  onProviderChange?: (provider: GardenProvider) => void;
   onSeasonChange?: (season: GardenSeason) => void;
   onWeatherChange?: (weather: GardenWeather) => void;
   onTimelineChange?: (value: number) => void;
@@ -318,6 +321,7 @@ export interface GithubSearchProps {
   value?: string;
   initialValue?: string;
   loading?: boolean;
+  provider?: GardenProvider;
   onValueChange?: (value: string) => void;
   onSubmit?: (username: string) => void;
 }
@@ -326,6 +330,7 @@ export function GithubSearch({
   value,
   initialValue = "",
   loading,
+  provider = "github",
   onValueChange,
   onSubmit,
 }: GithubSearchProps) {
@@ -347,7 +352,7 @@ export function GithubSearch({
   return (
     <form className="cg-search" role="search" onSubmit={submit}>
       <label className="cg-sr-only" htmlFor={inputId}>
-        Explore a GitHub garden
+        Explore a {provider === "gitlab" ? "GitLab" : "GitHub"} garden
       </label>
       <Search size={15} aria-hidden="true" />
       <span className="cg-search-prefix" aria-hidden="true">
@@ -357,7 +362,7 @@ export function GithubSearch({
         id={inputId}
         value={currentValue}
         onChange={(event) => updateValue(event.target.value)}
-        placeholder="Enter a GitHub username"
+        placeholder={`Enter a ${provider === "gitlab" ? "GitLab" : "GitHub"} username`}
         autoComplete="off"
         autoCapitalize="none"
         spellCheck={false}
@@ -375,6 +380,7 @@ export interface GardenTopNavigationProps extends GithubSearchProps {
   onMenu?: () => void;
   onShare?: () => void;
   dataSource?: GitHubDataSource;
+  onProviderChange?: (provider: GardenProvider) => void;
 }
 
 export function GardenTopNavigation({
@@ -382,24 +388,45 @@ export function GardenTopNavigation({
   onMenu,
   onShare,
   dataSource,
+  onProviderChange,
+  provider = "github",
   ...searchProps
 }: GardenTopNavigationProps) {
   return (
     <header className="cg-topbar">
       <GardenBrand menuOpen={menuOpen} onMenu={onMenu} />
-      <GithubSearch {...searchProps} />
+      <GithubSearch {...searchProps} provider={provider} />
       <div className="cg-top-actions">
+        <div className="cg-provider-switcher" role="group" aria-label="Contribution source">
+          {(["github", "gitlab"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={cx("cg-provider-option", provider === option && "is-active")}
+              aria-pressed={provider === option}
+              onClick={() => onProviderChange?.(option)}
+            >
+              {option === "github" ? "GitHub" : "GitLab"}
+            </button>
+          ))}
+        </div>
         {dataSource ? (
           <div
             className={cx("cg-live-label", dataSource === "demo" && "is-demo")}
             title={
               dataSource === "github"
                 ? "Loaded from GitHub through the private server connection"
-                : "Using the built-in local demo dataset"
+                : dataSource === "gitlab"
+                  ? "Loaded from GitLab's public profile data"
+                  : "Using the built-in local demo dataset"
             }
           >
             <span aria-hidden="true" />
-            {dataSource === "github" ? "Live GitHub" : "Demo garden"}
+            {dataSource === "github"
+              ? "Live GitHub"
+              : dataSource === "gitlab"
+                ? "Live GitLab"
+                : "Demo garden"}
           </div>
         ) : null}
         <IconButton label="Share this garden" onClick={onShare}>
@@ -1178,6 +1205,8 @@ export function GardenUI({
   children,
   onSearchValueChange,
   onSearch,
+  provider = "github",
+  onProviderChange,
   onSeasonChange,
   onWeatherChange,
   onTimelineChange,
@@ -1235,8 +1264,10 @@ export function GardenUI({
       <GardenTopNavigation
         value={searchValue}
         loading={isSearching}
+        provider={provider}
         onValueChange={onSearchValueChange}
         onSubmit={onSearch}
+        onProviderChange={onProviderChange}
         onShare={onShare}
         dataSource={dataSource}
         menuOpen={mobileMenuOpen}
@@ -1342,6 +1373,7 @@ export function GardenUI({
             <GithubSearch
               value={searchValue}
               loading={isSearching}
+              provider={provider}
               onValueChange={onSearchValueChange}
               onSubmit={(username) => {
                 onSearch?.(username);

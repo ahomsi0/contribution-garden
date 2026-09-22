@@ -26,14 +26,15 @@ const siteUrl = (
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Contribution Garden — A living GitHub ecosystem",
+    default: "Contribution Garden — A living GitHub and GitLab ecosystem",
     template: "%s · Contribution Garden",
   },
   description:
-    "Walk through a living digital ecosystem grown from a developer’s GitHub contributions, streaks, pull requests, issues, and years of craft.",
+    "Walk through a living digital ecosystem grown from a developer’s GitHub or GitLab contributions, streaks, pull requests, issues, and years of craft.",
   applicationName: "Contribution Garden",
   keywords: [
     "GitHub contributions",
+    "GitLab contributions",
     "developer portfolio",
     "3D data visualization",
     "interactive garden",

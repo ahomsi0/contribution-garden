@@ -27,6 +27,11 @@ import {
 import { useAmbientSound } from "@/hooks/use-ambient-sound";
 import { detectGardenQuality } from "@/lib/detect-quality";
 import {
+  gardenProviderLabel,
+  normalizeGardenHandle,
+  type GardenProvider,
+} from "@/lib/garden-provider";
+import {
   useGardenStore,
   type SelectedGardenEntity,
   type Season,
@@ -145,13 +150,6 @@ function longestActiveStreak(days: ContributionDay[]) {
   return longest;
 }
 
-function normalizeUsername(value: string): string | null {
-  const username = value.trim().replace(/^@/, "");
-  return /^(?!-)[a-zA-Z0-9-]{1,39}(?<!-)$/.test(username)
-    ? username.toLowerCase()
-    : null;
-}
-
 function selectionForUI(selection: GardenSelection | null): SelectedGardenEntity | null {
   if (!selection) return null;
 
@@ -185,6 +183,7 @@ export default function ContributionGarden({
   onReady,
 }: ContributionGardenProps) {
   const {
+    provider,
     username,
     data,
     status,
@@ -197,6 +196,7 @@ export default function ContributionGarden({
     isFlythrough,
     soundEnabled,
     selected,
+    setProvider,
     setUsername,
     clearData,
     setData,
@@ -242,8 +242,14 @@ export default function ContributionGarden({
     hasInitialized.current = true;
 
     const params = new URLSearchParams(window.location.search);
-    const requestedFromUrl = normalizeUsername(params.get("user") ?? "");
+    const requestedProvider: GardenProvider =
+      params.get("provider") === "gitlab" ? "gitlab" : "github";
+    const requestedFromUrl = normalizeGardenHandle(
+      params.get("user") ?? "",
+      requestedProvider,
+    );
     const requested = requestedFromUrl ?? username;
+    setProvider(requestedProvider);
     setUsername(requested);
     setSearchValue(requested);
     if (params.has("github")) {
@@ -257,28 +263,38 @@ export default function ContributionGarden({
     setTimeOfDay(localTime === "night" ? "day" : localTime);
 
     setQuality(detectGardenQuality());
-    // Run-once URL/store bootstrap; `username` is intentionally not a
-    // dependency so later searches do not re-seed from the URL.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setSeason, setTimeOfDay, setUsername]);
+    // Run-once URL/store bootstrap; the guard prevents later searches from
+    // re-seeding the current garden from the URL.
+  }, [setProvider, setSeason, setTimeOfDay, setUsername, username]);
 
   // Browser Back steps through shared ?user= gardens instead of leaving.
   useEffect(() => {
     const handlePopState = () => {
-      const requested = normalizeUsername(
-        new URLSearchParams(window.location.search).get("user") ?? "",
+      const params = new URLSearchParams(window.location.search);
+      const requestedProvider: GardenProvider =
+        params.get("provider") === "gitlab" ? "gitlab" : "github";
+      const requested = normalizeGardenHandle(
+        params.get("user") ?? "",
+        requestedProvider,
       );
       if (!requested) return;
-      if (requested === useGardenStore.getState().username) return;
+      const current = useGardenStore.getState();
+      if (
+        requested === current.username &&
+        requestedProvider === current.provider
+      ) {
+        return;
+      }
       setTimeline(100);
       setPlaying(false);
       setSelected(null);
+      setProvider(requestedProvider);
       setUsername(requested);
       setSearchValue(requested);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [setPlaying, setSelected, setTimeline, setUsername]);
+  }, [setPlaying, setProvider, setSelected, setTimeline, setUsername]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -291,7 +307,7 @@ export default function ContributionGarden({
       try {
         const headers = new Headers({ Accept: "application/json" });
         const response = await fetch(
-          `/api/github/${encodeURIComponent(username)}`,
+          `/api/${provider}/${encodeURIComponent(username)}`,
           {
             signal: controller.signal,
             headers,
@@ -344,6 +360,7 @@ export default function ContributionGarden({
     setSelected,
     setStatus,
     onReady,
+    provider,
     username,
   ]);
 
@@ -474,14 +491,43 @@ export default function ContributionGarden({
     return data.calendar.filter((day) => day.date >= startDate && day.count > 0).length;
   }, [data]);
 
-  const metrics = useMemo<GardenMetric[]>(
-    () => [
+  const metrics = useMemo<GardenMetric[]>(() => {
+    const common = [
       {
-        key: "contributions",
+        key: "contributions" as const,
         label: "Contributions",
         value: stats.totalContributions,
         detail: `${rollingYearActiveDays} active days · last year`,
       },
+      {
+        key: "streak" as const,
+        label: "Longest streak",
+        value: `${stats.streak}d`,
+        detail: "Continuous bloom",
+      },
+      {
+        key: "repositories" as const,
+        label: "Repositories",
+        value: stats.repositories,
+        detail: "Garden plots",
+      },
+      { key: "stars" as const, label: "Stars", value: stats.stars ?? 0 },
+      { key: "followers" as const, label: "Followers", value: stats.followers ?? 0 },
+    ];
+    if (data?.source === "gitlab") {
+      return [
+        common[0],
+        {
+          key: "commits" as const,
+          label: "Activity events",
+          value: stats.totalContributions,
+          detail: "GitLab public calendar",
+        },
+        ...common.slice(1),
+      ];
+    }
+    return [
+      common[0],
       { key: "commits", label: "Commits", value: stats.commits, detail: "Last year" },
       {
         key: "pullRequests",
@@ -490,23 +536,9 @@ export default function ContributionGarden({
         detail: "Last year",
       },
       { key: "issues", label: "Issues", value: stats.issues, detail: "Last year" },
-      {
-        key: "streak",
-        label: "Longest streak",
-        value: `${stats.streak}d`,
-        detail: "Continuous bloom",
-      },
-      {
-        key: "repositories",
-        label: "Repositories",
-        value: stats.repositories,
-        detail: "Garden plots",
-      },
-      { key: "stars", label: "Stars", value: stats.stars ?? 0 },
-      { key: "followers", label: "Followers", value: stats.followers ?? 0 },
-    ],
-    [rollingYearActiveDays, stats],
-  );
+      ...common.slice(1),
+    ];
+  }, [data?.source, rollingYearActiveDays, stats]);
 
   const achievements = useMemo<GardenAchievement[]>(() => {
     const years = data?.contributionYears.length ?? 1;
@@ -682,9 +714,12 @@ export default function ContributionGarden({
 
   const handleSearch = useCallback(
     (value: string) => {
-      const normalized = normalizeUsername(value);
+      const normalized = normalizeGardenHandle(value, provider);
       if (!normalized) {
-        setToast({ message: "Use a valid GitHub username", tone: "error" });
+        setToast({
+          message: `Use a valid ${gardenProviderLabel(provider)} username`,
+          tone: "error",
+        });
         return;
       }
       setUsername(normalized);
@@ -696,10 +731,45 @@ export default function ContributionGarden({
       setWalkInput(emptyWalkInput());
       const nextUrl = new URL(window.location.href);
       nextUrl.searchParams.set("user", normalized);
+      nextUrl.searchParams.set("provider", provider);
       // Push so browser Back returns to the previously viewed garden.
       window.history.pushState({}, "", nextUrl);
     },
-    [setFlythrough, setPlaying, setTimeline, setUsername],
+    [
+      provider,
+      setFlythrough,
+      setPlaying,
+      setTimeline,
+      setUsername,
+    ],
+  );
+
+  const handleProviderChange = useCallback(
+    (nextProvider: GardenProvider) => {
+      if (nextProvider === provider) return;
+      const fallback = nextProvider === "gitlab" ? "gitlab" : "octocat";
+      const nextUsername =
+        normalizeGardenHandle(searchValue, nextProvider) ?? fallback;
+      setProvider(nextProvider);
+      setUsername(nextUsername);
+      setSearchValue(nextUsername);
+      setTimeline(100);
+      setPlaying(false);
+      setSelected(null);
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("user", nextUsername);
+      nextUrl.searchParams.set("provider", nextProvider);
+      window.history.pushState({}, "", nextUrl);
+    },
+    [
+      provider,
+      searchValue,
+      setPlaying,
+      setProvider,
+      setSelected,
+      setTimeline,
+      setUsername,
+    ],
   );
 
   const handleSelection = useCallback(
@@ -849,8 +919,10 @@ export default function ContributionGarden({
       data?.profile.bio ??
       "A living record of patient craft, quiet experiments, and code left better than it was found.",
     location: data?.profile.location,
-    githubUrl: data?.profile.url,
-    joinedYear: data ? new Date(data.profile.joinedAt).getFullYear() : undefined,
+    profileUrl: data?.profile.url,
+    joinedYear: data?.profile.joinedAt
+      ? new Date(data.profile.joinedAt).getFullYear()
+      : undefined,
     followers: data?.profile.followers,
     repositories: data?.profile.repositories,
     stars: data?.profile.stars,
@@ -873,6 +945,8 @@ export default function ContributionGarden({
         isSearching={status === "loading"}
         onSearchValueChange={setSearchValue}
         onSearch={handleSearch}
+        provider={provider}
+        onProviderChange={handleProviderChange}
         onSeasonChange={handleSeasonChange}
         onWeatherChange={setWeather}
         onTimelineChange={handleTimelineChange}
@@ -948,7 +1022,9 @@ export default function ContributionGarden({
           >
             <strong>The garden could not be grown</strong>
             <span>{error}</span>
-            <small>Try another GitHub username from the search field.</small>
+            <small>
+              Try another {gardenProviderLabel(provider)} username from the search field.
+            </small>
           </motion.div>
         ) : null}
       </AnimatePresence>

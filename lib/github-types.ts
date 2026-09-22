@@ -1,10 +1,12 @@
 /**
- * The small, stable data contract shared by the GitHub route and the garden UI.
- * GitHub GraphQL response types intentionally stay inside the route so API
+ * The small, stable data contract shared by provider routes and the garden UI.
+ * Upstream API response types intentionally stay inside each route so API
  * changes do not leak into the visual layer.
  */
 
-export type GitHubDataSource = "github" | "demo";
+export type GardenDataSource = "github" | "gitlab" | "demo";
+/** @deprecated Use GardenDataSource for provider-neutral UI code. */
+export type GitHubDataSource = GardenDataSource;
 
 export type ContributionLevel = 0 | 1 | 2 | 3 | 4;
 
@@ -17,7 +19,7 @@ export interface GitHubProfile {
   location: string | null;
   company: string | null;
   websiteUrl: string | null;
-  joinedAt: string;
+  joinedAt: string | null;
   followers: number;
   following: number;
   repositories: number;

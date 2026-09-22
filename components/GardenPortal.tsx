@@ -2,6 +2,11 @@
 
 import type { ComponentType, FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  gardenProviderLabel,
+  normalizeGardenHandle,
+  type GardenProvider,
+} from "@/lib/garden-provider";
 
 import "./garden-portal.css";
 
@@ -11,15 +16,9 @@ interface InteractiveGardenProps {
   onReady?: () => void;
 }
 
-function normalizeUsername(value: string) {
-  const username = value.trim().replace(/^@/, "");
-  return /^(?!-)[a-zA-Z0-9-]{1,39}(?<!-)$/.test(username)
-    ? username.toLowerCase()
-    : null;
-}
-
 export default function GardenPortal() {
   const [phase, setPhase] = useState<PortalPhase>("landing");
+  const [provider, setProvider] = useState<GardenProvider>("github");
   const [username, setUsername] = useState("octocat");
   const [error, setError] = useState<string | null>(null);
   const [heroVisible, setHeroVisible] = useState(true);
@@ -29,9 +28,17 @@ export default function GardenPortal() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requested = normalizeUsername(params.get("user") ?? "");
+    const requestedProvider: GardenProvider =
+      params.get("provider") === "gitlab" ? "gitlab" : "github";
+    const requested = normalizeGardenHandle(
+      params.get("user") ?? "",
+      requestedProvider,
+    );
     if (!requested) return;
-    const frame = window.requestAnimationFrame(() => setUsername(requested));
+    const frame = window.requestAnimationFrame(() => {
+      setProvider(requestedProvider);
+      setUsername(requested);
+    });
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
@@ -48,9 +55,9 @@ export default function GardenPortal() {
     event?.preventDefault();
     if (phase === "loading") return;
 
-    const normalized = normalizeUsername(username);
+    const normalized = normalizeGardenHandle(username, provider);
     if (!normalized) {
-      setError("Enter a valid GitHub username.");
+      setError(`Enter a valid ${gardenProviderLabel(provider)} username.`);
       return;
     }
 
@@ -58,6 +65,7 @@ export default function GardenPortal() {
     setUsername(normalized);
     const nextUrl = new URL(window.location.href);
     nextUrl.searchParams.set("user", normalized);
+    nextUrl.searchParams.set("provider", provider);
     window.history.replaceState({}, "", nextUrl);
     setPhase("loading");
 
@@ -147,13 +155,31 @@ export default function GardenPortal() {
               <em>something growing.</em>
             </h1>
             <p className="garden-portal__lede">
-              Step inside a walkable world shaped by your GitHub history—where
+              Step inside a walkable world shaped by your {gardenProviderLabel(provider)} history—where
               streaks become paths, repositories take root, and years of work
               grow into landmarks.
             </p>
 
             <form className="garden-portal__entry" onSubmit={enterGarden}>
-              <label htmlFor="garden-username">GitHub username</label>
+              <div className="garden-portal__providers" role="group" aria-label="Contribution source">
+                {(["github", "gitlab"] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className={provider === option ? "is-active" : ""}
+                    aria-pressed={provider === option}
+                    onClick={() => {
+                      setProvider(option);
+                      setError(null);
+                    }}
+                  >
+                    {gardenProviderLabel(option)}
+                  </button>
+                ))}
+              </div>
+              <label htmlFor="garden-username">
+                {gardenProviderLabel(provider)} username
+              </label>
               <div className="garden-portal__entry-row">
                 <div className="garden-portal__username">
                   <span aria-hidden="true">@</span>

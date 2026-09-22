@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { GardenProvider } from "./garden-provider";
 import type { GitHubGardenData } from "./github-types";
 
 export type Season = "spring" | "summer" | "autumn" | "winter";
@@ -17,6 +18,7 @@ export interface SelectedGardenEntity {
 }
 
 interface GardenState {
+  provider: GardenProvider;
   username: string;
   data: GitHubGardenData | null;
   status: "idle" | "loading" | "ready" | "error";
@@ -29,6 +31,7 @@ interface GardenState {
   isFlythrough: boolean;
   soundEnabled: boolean;
   selected: SelectedGardenEntity | null;
+  setProvider: (provider: GardenProvider) => void;
   setUsername: (username: string) => void;
   clearData: () => void;
   setData: (data: GitHubGardenData) => void;
@@ -44,6 +47,7 @@ interface GardenState {
 }
 
 export const useGardenStore = create<GardenState>((set) => ({
+  provider: "github",
   username: "octocat",
   data: null,
   status: "idle",
@@ -56,6 +60,7 @@ export const useGardenStore = create<GardenState>((set) => ({
   isFlythrough: false,
   soundEnabled: false,
   selected: null,
+  setProvider: (provider) => set({ provider }),
   setUsername: (username) => set({ username }),
   clearData: () => set({ data: null }),
   setData: (data) => set({ data, status: "ready", error: null }),

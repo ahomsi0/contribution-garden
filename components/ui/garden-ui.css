@@ -282,6 +282,35 @@
   gap: 12px;
 }
 
+.cg-provider-switcher {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(244, 241, 231, 0.2);
+  border-radius: 999px;
+  background: rgba(20, 25, 22, 0.42);
+  backdrop-filter: blur(12px);
+}
+
+.cg-provider-option {
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: rgba(244, 241, 231, 0.55);
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--cg-mono);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cg-provider-option:hover,
+.cg-provider-option.is-active {
+  color: var(--cg-ink);
+  background: var(--cg-cream);
+}
+
 .cg-connection-trigger {
   display: inline-flex;
   height: 32px;

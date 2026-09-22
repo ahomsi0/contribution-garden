@@ -1,9 +1,9 @@
 # Contribution Garden
 
-Contribution Garden turns a developer’s GitHub history into a living, explorable
-ecosystem. Commits grow vegetation, pull requests become trees, issues bloom as
-flowers, streaks attract wildlife, and long-term milestones permanently reshape
-the landscape.
+Contribution Garden turns a developer’s GitHub or GitLab history into a living,
+explorable ecosystem. Commits grow vegetation, pull requests become trees,
+issues bloom as flowers, streaks attract wildlife, and long-term milestones
+permanently reshape the landscape.
 
 ## Local setup
 
@@ -58,10 +58,23 @@ For private contribution details, a separate optional GitHub authorization
 flow would still be required. The default garden intentionally reads only data
 GitHub exposes publicly.
 
+### Live public GitLab data
+
+Choose GitLab on the entry screen and enter a GitLab username. GitLab.com works
+without credentials: the server reads the public profile, public projects,
+project language breakdowns, and the public contribution calendar. Set
+`GITLAB_BASE_URL` for a GitLab Self-Managed host, or optionally provide a
+server-side `GITLAB_TOKEN` for higher API limits.
+
+GitLab’s public calendar currently covers the most recent 12 months and exposes
+one aggregate activity count per day. The garden preserves that information and
+labels commit, merge-request, and issue category totals as unavailable instead
+of estimating them.
+
 ## Experience
 
 - Procedural 3D terrain, pond, paths, vegetation, trees, flowers, and wildlife
-- GitHub username search with shareable local URLs
+- GitHub and GitLab username search with shareable local URLs
 - Multi-year growth timeline with playback controls
 - Spring, summer, autumn, and winter ecosystems
 - Sun, rain, wind, fog, and snow weather systems
@@ -102,7 +115,8 @@ Operational endpoints:
 
 - `GET /api/health` — liveness probe returning `{ ok: true }` plus which data
   sources are configured (never secret values).
-- `GET /api/github/:username` — rate limited per client IP, negatively cached
+- `GET /api/github/:username` and `GET /api/gitlab/:username` — rate limited per
+  client IP, negatively cached
   for 30 seconds after upstream failures (with stale-while-error serving), and
   cached fresh for 30 minutes per credential scope.
 - GitHub session refreshes are single-flighted so concurrent requests cannot
@@ -110,8 +124,9 @@ Operational endpoints:
 
 ## Data behavior
 
-`GET /api/github/:username` returns a normalized garden data model. With the
-server OAuth App credential—or the legacy backend `GITHUB_TOKEN`—it loads
+Both provider routes return the same normalized garden data model. With the
+server OAuth App credential—or the legacy backend `GITHUB_TOKEN`—the GitHub
+route loads
 public contribution calendars, commits, pull requests, issues, reviews,
 repositories, stars, followers, languages, and contribution years via GraphQL.
 Without a credential, it returns a clearly labelled username-seeded demo so

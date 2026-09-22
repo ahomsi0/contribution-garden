@@ -13,6 +13,7 @@ export async function GET() {
     ok: true,
     service: "contribution-garden",
     time: new Date().toISOString(),
+    liveGitLabData: true,
     liveGitHubData: Boolean((oauthClientId && oauthClientSecret) || legacyToken),
     visitorAuth: Boolean(
       process.env.GITHUB_APP_CLIENT_ID?.trim() &&
