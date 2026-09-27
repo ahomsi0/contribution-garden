@@ -186,34 +186,6 @@
   text-transform: uppercase;
 }
 
-.garden-portal__providers {
-  display: inline-flex;
-  gap: 4px;
-  margin-bottom: 12px;
-  padding: 3px;
-  border: 1px solid rgba(243, 240, 231, 0.18);
-  background: rgba(9, 15, 12, 0.48);
-}
-
-.garden-portal__providers button {
-  min-width: 72px;
-  border: 0;
-  padding: 7px 10px;
-  color: rgba(243, 240, 231, 0.55);
-  background: transparent;
-  cursor: pointer;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.garden-portal__providers button:hover,
-.garden-portal__providers button.is-active {
-  color: var(--portal-pine);
-  background: var(--portal-bone);
-}
-
 .garden-portal__entry-row {
   display: grid;
   grid-template-columns: minmax(170px, 1fr) auto;

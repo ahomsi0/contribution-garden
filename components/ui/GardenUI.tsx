@@ -175,7 +175,6 @@ export interface GardenUIProps {
   onSearchValueChange?: (value: string) => void;
   onSearch?: (username: string) => void;
   provider?: GardenProvider;
-  onProviderChange?: (provider: GardenProvider) => void;
   onSeasonChange?: (season: GardenSeason) => void;
   onWeatherChange?: (weather: GardenWeather) => void;
   onTimelineChange?: (value: number) => void;
@@ -380,7 +379,6 @@ export interface GardenTopNavigationProps extends GithubSearchProps {
   onMenu?: () => void;
   onShare?: () => void;
   dataSource?: GitHubDataSource;
-  onProviderChange?: (provider: GardenProvider) => void;
 }
 
 export function GardenTopNavigation({
@@ -388,7 +386,6 @@ export function GardenTopNavigation({
   onMenu,
   onShare,
   dataSource,
-  onProviderChange,
   provider = "github",
   ...searchProps
 }: GardenTopNavigationProps) {
@@ -397,19 +394,6 @@ export function GardenTopNavigation({
       <GardenBrand menuOpen={menuOpen} onMenu={onMenu} />
       <GithubSearch {...searchProps} provider={provider} />
       <div className="cg-top-actions">
-        <div className="cg-provider-switcher" role="group" aria-label="Contribution source">
-          {(["github", "gitlab"] as const).map((option) => (
-            <button
-              key={option}
-              type="button"
-              className={cx("cg-provider-option", provider === option && "is-active")}
-              aria-pressed={provider === option}
-              onClick={() => onProviderChange?.(option)}
-            >
-              {option === "github" ? "GitHub" : "GitLab"}
-            </button>
-          ))}
-        </div>
         {dataSource ? (
           <div
             className={cx("cg-live-label", dataSource === "demo" && "is-demo")}
@@ -1206,7 +1190,6 @@ export function GardenUI({
   onSearchValueChange,
   onSearch,
   provider = "github",
-  onProviderChange,
   onSeasonChange,
   onWeatherChange,
   onTimelineChange,
@@ -1267,7 +1250,6 @@ export function GardenUI({
         provider={provider}
         onValueChange={onSearchValueChange}
         onSubmit={onSearch}
-        onProviderChange={onProviderChange}
         onShare={onShare}
         dataSource={dataSource}
         menuOpen={mobileMenuOpen}

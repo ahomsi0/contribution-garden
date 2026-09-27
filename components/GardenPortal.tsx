@@ -161,22 +161,6 @@ export default function GardenPortal() {
             </p>
 
             <form className="garden-portal__entry" onSubmit={enterGarden}>
-              <div className="garden-portal__providers" role="group" aria-label="Contribution source">
-                {(["github", "gitlab"] as const).map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    className={provider === option ? "is-active" : ""}
-                    aria-pressed={provider === option}
-                    onClick={() => {
-                      setProvider(option);
-                      setError(null);
-                    }}
-                  >
-                    {gardenProviderLabel(option)}
-                  </button>
-                ))}
-              </div>
               <label htmlFor="garden-username">
                 {gardenProviderLabel(provider)} username
               </label>

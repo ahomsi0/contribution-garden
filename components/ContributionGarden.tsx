@@ -744,34 +744,6 @@ export default function ContributionGarden({
     ],
   );
 
-  const handleProviderChange = useCallback(
-    (nextProvider: GardenProvider) => {
-      if (nextProvider === provider) return;
-      const fallback = nextProvider === "gitlab" ? "gitlab" : "octocat";
-      const nextUsername =
-        normalizeGardenHandle(searchValue, nextProvider) ?? fallback;
-      setProvider(nextProvider);
-      setUsername(nextUsername);
-      setSearchValue(nextUsername);
-      setTimeline(100);
-      setPlaying(false);
-      setSelected(null);
-      const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set("user", nextUsername);
-      nextUrl.searchParams.set("provider", nextProvider);
-      window.history.pushState({}, "", nextUrl);
-    },
-    [
-      provider,
-      searchValue,
-      setPlaying,
-      setProvider,
-      setSelected,
-      setTimeline,
-      setUsername,
-    ],
-  );
-
   const handleSelection = useCallback(
     (nextSelection: GardenSelection | null) => {
       setSelected(selectionForUI(nextSelection));
@@ -946,7 +918,6 @@ export default function ContributionGarden({
         onSearchValueChange={setSearchValue}
         onSearch={handleSearch}
         provider={provider}
-        onProviderChange={handleProviderChange}
         onSeasonChange={handleSeasonChange}
         onWeatherChange={setWeather}
         onTimelineChange={handleTimelineChange}
