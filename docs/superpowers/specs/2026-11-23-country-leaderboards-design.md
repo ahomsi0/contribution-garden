@@ -31,9 +31,12 @@ In scope:
 Out of scope (each gets its own spec):
 
 - Restyling the 3D garden and fixing how it scales with activity.
-- The four data bugs found in the 2026-11-23 review (last-12-months totals,
-  shared-link race, 39 s load for heavy users, weak data-to-visual mapping).
-  These are fixed first, before this spec is implemented.
+- Weak data-to-visual mapping in the 3D scene (part of the restyle spec).
+
+Prerequisites done at the start of this work (Part A of the plan): the
+shared-link double load, the ~39 s load for heavy users, and a lifetime total
+on the garden page. The "last 12 months" totals turned out to be intentional
+(labelled "Last year" and covered by a test) and stay as they are.
 - Rank-change history ("up 3 since yesterday").
 - GitLab leaderboards.
 
@@ -56,8 +59,9 @@ Brazil, Canada, Netherlands, Japan, Poland. Adding a country is a config edit.
 
 For each alias, call GitHub REST user search:
 `q=location:"<alias>" followers:>10 type:user`, `sort=followers`,
-`order=desc`, paged up to the API cap of 1,000 results. Merge all aliases,
-de-duplicate by user id, keep the 1,000 candidates with the most followers.
+`order=desc`, paged up to the API cap of 1,000 results. Search results carry
+no follower counts, so the per-alias lists (each already sorted by followers)
+are merged round-robin, de-duplicated by user id, and cut at 1,000 candidates.
 Search is limited to 30 requests/minute, so search calls are throttled to one
 every 2.1 s (about 10 pages per alias).
 
@@ -67,10 +71,13 @@ Per candidate, reuse the per-year history query from
 `app/api/github/[username]/route.ts`, but request only
 `contributionCalendar { totalContributions weeks { contributionDays { date contributionCount } } }`
 per year (no `commitContributionsByRepository`, which is what made heavy
-users take ~39 s). Years run from the account's creation year to the current
-year, batched 4 years per query as today.
+users take ~39 s). The first query returns the profile, `contributionYears`,
+the rate limit, and the two most recent years; a new user's earlier years
+(from their first contribution year) follow in batches of 8 years per query.
+Users are processed 4 at a time.
 
-- `score` = sum over years of `totalContributions`.
+- `score` = sum of all daily counts, which equals the sum over years of
+  `totalContributions`.
 - `months` = daily counts rolled up into 12 monthly totals per year.
 
 ### Incremental refresh
@@ -153,10 +160,14 @@ path alias from `tsconfig.json`. Uploads use the `@vercel/blob` package.
 - `--limit`: cap candidates (for dry runs).
 - `--out`: write JSON to a local directory instead of uploading.
 
-Countries are processed one after another. A failure in one country logs the
-error, leaves that country's previous Blob file in place, and continues; the
-process exits non-zero at the end if any country failed. A single user that
-errors (deleted, renamed, suspended) is skipped. `index.json` is written last.
+Countries are processed one after another, never-built and least recently
+updated first, so a first full build that cannot finish in one run (GitHub's
+hourly rate limit) completes over the following runs. A failure in one country
+logs the error, leaves that country's previous Blob file in place, and
+continues; the process exits non-zero at the end if any country failed. A
+single user that errors (deleted, renamed, suspended) is skipped; an auth or
+rate-limit error fails the country. `index.json` is rewritten after every
+finished country, so a run cut off by the timeout still publishes its work.
 
 ### Workflow — `.github/workflows/rankings.yml`
 
@@ -164,7 +175,8 @@ errors (deleted, renamed, suspended) is skipped. `index.json` is written last.
   `country` input.
 - Secrets: `RANKINGS_GITHUB_TOKEN` (a personal access token with no scopes;
   the built-in `GITHUB_TOKEN` is limited to 1,000 requests/hour) and
-  `BLOB_READ_WRITE_TOKEN`.
+  `BLOB_READ_WRITE_TOKEN`; repository variable `RANKINGS_BASE_URL` (the Blob
+  store's public base URL), which the Vercel project also needs as an env var.
 - `timeout-minutes: 350`.
 
 ## 2. Leaderboard UI
@@ -183,9 +195,15 @@ shared links keep working. GitLab gardens stay reachable at
 
 ### Snapshot reading — `lib/rankings/store.ts`
 
-Server-side fetch of `rankings/index.json` and `rankings/<slug>.json` from the
-public Blob URL, cached with `revalidate: 3600`. Responses are validated; an
-invalid or missing file is treated as "no snapshot".
+Server-side fetch of `rankings/index.json` and `rankings/<slug>.json` from
+`RANKINGS_BASE_URL`, cached in memory for 10 minutes per URL (not relying on
+Next's fetch cache, whose support in vinext is unverified). Responses are
+validated; an invalid, missing, or unreachable file is treated as "no
+snapshot". Blob files are uploaded with a 5-minute CDN max-age.
+
+The garden page also gains a "Lifetime" stat card computed from its calendar,
+so the number on `/u/<login>` matches the board. The existing "Last year"
+cards are unchanged.
 
 ### Country grid — `components/leaderboard/CountryGrid.tsx`
 
