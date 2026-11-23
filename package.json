@@ -10,7 +10,7 @@
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test \"tests/*.test.mjs\"",
-    "test:unit": "node --import tsx --test \"tests/unit/**/*.test.ts\"",
+    "test:unit": "node --import tsx --test \"tests/unit/**/*.test.{ts,tsx}\"",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .vercel",
     "typecheck": "tsc --noEmit",
     "rankings:build": "tsx scripts/build-rankings.ts",
