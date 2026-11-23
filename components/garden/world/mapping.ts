@@ -94,6 +94,25 @@ export function distanceToPath(x: number, z: number): number {
 /** Extra clearance between a year tree and an obstacle's radius. */
 export const OBSTACLE_CLEARANCE = 0.6;
 
+/** A 32-bit hash of two integers, for seeding per-item random streams. */
+function hash2(a: number, b: number) {
+  let h = Math.imul((a >>> 0) ^ 0x9e3779b9, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h ^ (b >>> 0), 0xc2b2ae35);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x27d4eb2d);
+  return (h ^ (h >>> 15)) >>> 0;
+}
+
+/** Separate streams for things drawn once per garden, not per year. */
+const SHRUB_STREAM = 0x5348;
+const ROCK_STREAM = 0x524b;
+
+/** The island's radius for a history spanning this many years. */
+export const islandRadiusForSpan = (spanYears: number) => clamp(9 + 0.28 * spanYears, 9, 13);
+const islandRadiusFor = islandRadiusForSpan;
+const treeRingRadiusFor = (islandRadius: number) => Math.max(7.4, 0.76 * islandRadius);
+
 export function computeGardenLayout(input: MappingInput): GardenLayout {
   const { stats, activity, season, density } = input;
   const obstacles = input.obstacles ?? [];
@@ -102,7 +121,14 @@ export function computeGardenLayout(input: MappingInput): GardenLayout {
     obstacles.some(
       (o) => Math.hypot(x - o.x, z - o.z) < o.radius + OBSTACLE_CLEARANCE,
     );
-  const rand = mulberry32(input.seed);
+
+  // Every year with any activity, ignoring visibleThrough: each one owns a
+  // fixed slot on the ring, so trees don't move as the timeline plays.
+  const allYearSet = new Set<number>();
+  for (const d of input.days) {
+    if (d.count > 0) allYearSet.add(Number(d.date.slice(0, 4)));
+  }
+  const allYears = [...allYearSet].sort((a, b) => a - b);
 
   const visible = input.days.filter(
     (d) => d.count > 0 && (input.visibleThrough === undefined || d.date <= input.visibleThrough),
@@ -126,24 +152,37 @@ export function computeGardenLayout(input: MappingInput): GardenLayout {
 
   const years = [...byYear.keys()].sort((a, b) => a - b);
   const spanYears = years.length === 0 ? 0 : years[years.length - 1] - years[0] + 1;
-  const islandRadius = clamp(9 + 0.28 * spanYears, 9, 13);
-  const treeRingRadius = Math.max(7.4, 0.76 * islandRadius);
+  const islandRadius = islandRadiusFor(spanYears);
+  const treeRingRadius = treeRingRadiusFor(islandRadius);
 
-  const n = years.length;
+  const firstYear = allYears[0] ?? 0;
+  const fullSpan = allYears.length === 0 ? 0 : allYears[allYears.length - 1] - firstYear + 1;
+  const fullRingRadius = treeRingRadiusFor(islandRadiusFor(fullSpan));
   const theta0 = Math.atan2(PATH_SLOPE, 1) + 0.35;
-  const step = (2 * Math.PI) / Math.max(n, 6);
-  const yearTrees: YearTreeLayout[] = years.map((year, i) => {
+  const step = (2 * Math.PI) / Math.max(allYears.length, 6);
+  const slotOf = new Map(allYears.map((year, slot) => [year, slot]));
+
+  const yearTrees: YearTreeLayout[] = years.map((year) => {
     const entry = byYear.get(year)!;
-    let theta = theta0 + i * step + (rand() * 2 - 1) * 0.08;
-    const r = treeRingRadius + (rand() * 2 - 1) * 0.35;
-    let x = r * Math.cos(theta);
-    let z = r * Math.sin(theta);
-    for (let tries = 0; tries < 3 && blocked(x, z); tries += 1) {
-      theta += 0.3;
-      x = r * Math.cos(theta);
-      z = r * Math.sin(theta);
-    }
+    const slot = slotOf.get(year)!;
+    const rand = mulberry32(hash2(input.seed, year));
+    let theta = theta0 + slot * step + (rand() * 2 - 1) * 0.08;
+    const jitter = (rand() * 2 - 1) * 0.35;
     const rotation = rand() * 2 * Math.PI;
+    // The ring grows from where it is when this year first shows to the
+    // full-history ring, so the nudge keeps the tree clear across that span
+    // and the angle never depends on how much of the timeline is visible.
+    const nearest = treeRingRadiusFor(islandRadiusFor(year - firstYear + 1)) + jitter;
+    const furthest = fullRingRadius + jitter;
+    const blockedAlong = (angle: number) => {
+      for (let k = 0; k <= 4; k += 1) {
+        const r = lerp(nearest, furthest, k / 4);
+        if (blocked(r * Math.cos(angle), r * Math.sin(angle))) return true;
+      }
+      return false;
+    };
+    for (let tries = 0; tries < 3 && blockedAlong(theta); tries += 1) theta += 0.3;
+    const r = treeRingRadius + jitter;
     let busiestMonth = 0;
     for (let m = 1; m < 12; m += 1) {
       if (entry.months[m] > entry.months[busiestMonth]) busiestMonth = m;
@@ -154,10 +193,10 @@ export function computeGardenLayout(input: MappingInput): GardenLayout {
       activeDays: entry.activeDays,
       busiestMonth,
       scale: clamp(0.55 + 0.32 * Math.log10(1 + entry.total), 0.6, 1.9),
-      x,
-      z,
+      x: r * Math.cos(theta),
+      z: r * Math.sin(theta),
       rotation,
-      evergreen: i % 4 === 3,
+      evergreen: slot % 4 === 3,
     };
   });
 
@@ -193,7 +232,7 @@ export function computeGardenLayout(input: MappingInput): GardenLayout {
     butterflyCount,
     birdCount: activity > 0.3 ? 2 + Math.round(activity * 4) : 0,
     fireflyCount: stats.streak >= 30 ? Math.min(40, Math.round(8 + stats.streak / 10)) : 0,
-    shrubCount: Math.round(lerp(10, 16, rand()) * density),
-    rockCount: Math.round(lerp(8, 12, rand()) * density),
+    shrubCount: Math.round(lerp(10, 16, mulberry32(hash2(input.seed, SHRUB_STREAM))()) * density),
+    rockCount: Math.round(lerp(8, 12, mulberry32(hash2(input.seed, ROCK_STREAM))()) * density),
   };
 }

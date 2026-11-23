@@ -47,6 +47,7 @@ import { Life } from "./world/Life";
 import {
   computeGardenLayout,
   type GardenLayout,
+  islandRadiusForSpan,
   type MappingInput,
 } from "./world/mapping";
 import { Meadow } from "./world/Meadow";
@@ -283,12 +284,12 @@ interface GardenWorldProps {
  * rim point the channel pours over, so year trees keep off the water.
  */
 function waterfallChannelObstacles(
-  layout: GardenLayout,
+  islandRadius: number,
+  pond: GardenLayout["pond"],
   quality: GardenQuality,
   seed: number,
 ) {
-  const pond = layout.pond;
-  const rim = outflowRimPoint(layout.islandRadius, pond, quality, seed);
+  const rim = outflowRimPoint(islandRadius, pond, quality, seed);
   const dx = rim.x - pond.x;
   const dz = rim.z - pond.z;
   const length = Math.hypot(dx, dz);
@@ -331,7 +332,6 @@ function GardenWorld({
   const { layout, channel } = useMemo(() => {
     const input: MappingInput = {
       days,
-      visibleThrough,
       stats: {
         pullRequests: stats.pullRequests,
         issues: stats.issues,
@@ -343,13 +343,29 @@ function GardenWorld({
       seed,
       density,
     };
+    // Year trees keep off the waterfall channel at every size the island
+    // grows through, from its first year to the full history, so a tree's
+    // place on the ring never depends on how much of the timeline shows.
     // The island radius and pond don't depend on obstacles, so a first pass
-    // tells us where the waterfall channel runs; year trees then keep off it.
-    const draft = computeGardenLayout(input);
-    const obstacles = waterfallChannelObstacles(draft, quality, seed);
+    // without them tells us where the channel runs.
+    const full = computeGardenLayout(input);
+    const treeObstacles = [
+      ...waterfallChannelObstacles(islandRadiusForSpan(1), full.pond, quality, seed),
+      ...waterfallChannelObstacles(full.islandRadius, full.pond, quality, seed),
+    ];
+    const visibleLayout = computeGardenLayout({
+      ...input,
+      visibleThrough,
+      obstacles: treeObstacles,
+    });
     return {
-      layout: computeGardenLayout({ ...input, obstacles }),
-      channel: obstacles,
+      layout: visibleLayout,
+      channel: waterfallChannelObstacles(
+        visibleLayout.islandRadius,
+        visibleLayout.pond,
+        quality,
+        seed,
+      ),
     };
   }, [
     days,

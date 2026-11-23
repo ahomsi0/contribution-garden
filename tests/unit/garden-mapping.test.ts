@@ -141,3 +141,51 @@ test("an obstacle on the ring keeps every year tree clear of it", () => {
     }
   }
 });
+
+const angleOf = (tree: { x: number; z: number }) => Math.atan2(tree.z, tree.x);
+const sameAngle = (a: number, b: number) => {
+  const gap = Math.abs(((a - b + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+  return gap <= 1e-9;
+};
+
+test("a year tree keeps its angle while later years appear", () => {
+  const days = heavyDays();
+  for (let year = 2009; year <= 2021; year += 1) {
+    const early = computeGardenLayout(input(days, 900, { visibleThrough: `${year + 1}-12-31` }));
+    const late = computeGardenLayout(input(days, 900, { visibleThrough: `${year + 5}-12-31` }));
+    const a = early.yearTrees.find((tree) => tree.year === year);
+    const b = late.yearTrees.find((tree) => tree.year === year);
+    assert.ok(a && b, `year ${year} has a tree in both`);
+    assert.ok(
+      sameAngle(angleOf(a), angleOf(b)),
+      `year ${year}: ${angleOf(a)} vs ${angleOf(b)}`,
+    );
+    assert.equal(a.rotation, b.rotation, `year ${year} rotation`);
+    assert.equal(a.evergreen, b.evergreen, `year ${year} evergreen`);
+  }
+});
+
+test("a year tree keeps its angle with an obstacle in play", () => {
+  const days = heavyDays();
+  const full = computeGardenLayout(input(days, 900));
+  const obstacle = { x: Math.cos(1.2) * full.treeRingRadius, z: Math.sin(1.2) * full.treeRingRadius, radius: 0.8 };
+  const fullTrees = computeGardenLayout(input(days, 900, { obstacles: [obstacle] })).yearTrees;
+  for (const through of ["2010-06-30", "2013-12-31", "2019-12-31"]) {
+    const layout = computeGardenLayout(input(days, 900, { visibleThrough: through, obstacles: [obstacle] }));
+    for (const tree of layout.yearTrees) {
+      const final = fullTrees.find((t) => t.year === tree.year)!;
+      assert.ok(sameAngle(angleOf(tree), angleOf(final)), `year ${tree.year} through ${through}`);
+      assert.ok(distanceToPath(tree.x, tree.z) >= 1.1, `year ${tree.year} on the path through ${through}`);
+    }
+  }
+});
+
+test("shrub and rock counts don't change with visibleThrough", () => {
+  const days = heavyDays();
+  const full = computeGardenLayout(input(days, 900));
+  for (const through of ["2009-03-01", "2011-12-31", "2016-07-04", "2026-01-01"]) {
+    const cut = computeGardenLayout(input(days, 900, { visibleThrough: through }));
+    assert.equal(cut.shrubCount, full.shrubCount, `shrubs through ${through}`);
+    assert.equal(cut.rockCount, full.rockCount, `rocks through ${through}`);
+  }
+});
