@@ -24,6 +24,8 @@ function sum(values: readonly number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
 
+const round = (value: number) => Math.round(value * 100) / 100;
+
 export function YearBeds({ years, scaleMax, className }: YearBedsProps) {
   const total = years.reduce((acc, year) => acc + sum(year.months), 0);
   const label =
@@ -48,7 +50,7 @@ export function YearBeds({ years, scaleMax, className }: YearBedsProps) {
         return (
           <g key={year.year}>
             <title>{`${year.year} · ${formatCount(sum(year.months))} contributions`}</title>
-            <rect x={x0} y={GROUND} width={bedWidth} height={6} rx={2} fill={SOIL} />
+            <rect x={round(x0)} y={GROUND} width={round(bedWidth)} height={6} rx={2} fill={SOIL} />
             {values.map((value, month) => {
               if (value <= 0) return null;
               const x = x0 + 1.5 + (month * (bedWidth - 3)) / 11;
@@ -56,10 +58,10 @@ export function YearBeds({ years, scaleMax, className }: YearBedsProps) {
               return (
                 <line
                   key={month}
-                  x1={x}
+                  x1={round(x)}
                   y1={GROUND}
-                  x2={x}
-                  y2={top}
+                  x2={round(x)}
+                  y2={round(top)}
                   stroke={GREENS[Math.min(3, Math.floor(value * 4))]}
                   strokeWidth={1.8}
                   strokeLinecap="round"
@@ -68,8 +70,8 @@ export function YearBeds({ years, scaleMax, className }: YearBedsProps) {
             })}
             {values[peak] > 0.5 ? (
               <circle
-                cx={x0 + 1.5 + (peak * (bedWidth - 3)) / 11}
-                cy={GROUND - (3 + values[peak] * (MAX_STEM - 3))}
+                cx={round(x0 + 1.5 + (peak * (bedWidth - 3)) / 11)}
+                cy={round(GROUND - (3 + values[peak] * (MAX_STEM - 3)))}
                 r={2.4}
                 fill={FLOWERS[yearIndex % FLOWERS.length]}
               />

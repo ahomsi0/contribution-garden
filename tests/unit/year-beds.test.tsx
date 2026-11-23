@@ -24,6 +24,20 @@ test("draws one titled bed per year and a stem per non-zero month", () => {
   assert.match(html, /aria-label="2024–2025: 908 contributions"/);
 });
 
+test("emits coordinates rounded to at most 2 decimals so SSR and hydration agree", () => {
+  const html = renderToStaticMarkup(
+    <YearBeds
+      years={[
+        { year: 2019, months: months([7, 13, 101, 3, 0, 55, 9, 1, 2, 17, 33, 900]) },
+        { year: 2020, months: months([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) },
+        { year: 2021, months: months([400]) },
+      ]}
+      scaleMax={900}
+    />,
+  );
+  assert.doesNotMatch(html, /="-?\d+\.\d{3,}"/);
+});
+
 test("renders an empty-but-valid svg for a user with no years", () => {
   const html = renderToStaticMarkup(<YearBeds years={[]} scaleMax={0} />);
   assert.match(html, /^<svg/);
