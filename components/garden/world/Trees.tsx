@@ -389,7 +389,7 @@ interface Forest {
   trunks: InstanceBatch;
   branches: InstanceBatch;
   years: YearTreeInfo[];
-  great: { shape: TreeShape; rootY: number; rotation: number; accent: string };
+  great: { scale: number; shape: TreeShape; rootY: number; rotation: number; accent: string };
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -456,8 +456,65 @@ function blobColour(
   return colour;
 }
 
+/** Tree scales are rounded to this step, so timeline playback rebuilds the
+ * forest only when a tree has grown visibly, not on every frame of data. */
+const SCALE_STEP = 0.02;
+const bucketScale = (scale: number) => Math.round(scale / SCALE_STEP) * SCALE_STEP;
+
+interface PlacedTree {
+  year: number;
+  evergreen: boolean;
+  x: number;
+  z: number;
+  rotation: number;
+  scale: number;
+}
+
+interface PlacedGreatTree {
+  x: number;
+  z: number;
+  scale: number;
+  glowing: boolean;
+}
+
+/**
+ * A string that changes only when a visible tree appears, moves or grows by
+ * a scale step: the forest is keyed on it rather than on the layout object,
+ * which is new on every timeline step.
+ */
+function forestKey(layout: GardenLayout) {
+  const trees = layout.yearTrees
+    .map((tree) =>
+      [
+        tree.year,
+        tree.evergreen ? 1 : 0,
+        tree.x.toFixed(3),
+        tree.z.toFixed(3),
+        tree.rotation.toFixed(4),
+        bucketScale(tree.scale).toFixed(2),
+      ].join(","),
+    )
+    .join("|");
+  const great = layout.greatTree;
+  return `${trees}#${great.x},${great.z},${bucketScale(great.scale).toFixed(2)},${great.glowing ? 1 : 0}`;
+}
+
+function parseForestKey(key: string): { trees: PlacedTree[]; great: PlacedGreatTree } {
+  const [treePart, greatPart] = key.split("#");
+  const trees = treePart
+    ? treePart.split("|").map((entry) => {
+        const [year, evergreen, x, z, rotation, scale] = entry.split(",").map(Number);
+        return { year, evergreen: evergreen === 1, x, z, rotation, scale };
+      })
+    : [];
+  const [x, z, scale, glowing] = greatPart.split(",").map(Number);
+  return { trees, great: { x, z, scale, glowing: glowing === 1 } };
+}
+
 function buildForest(
-  layout: GardenLayout,
+  trees: ReadonlyArray<PlacedTree>,
+  great: PlacedGreatTree,
+  greatShape: TreeShape,
   palette: WorldPalette,
   sampler: PhotorealIslandSurfaceSampler,
   season: GardenSeason,
@@ -486,7 +543,7 @@ function buildForest(
     target.glow.push(0);
   };
 
-  layout.yearTrees.forEach((tree, index) => {
+  trees.forEach((tree, index) => {
     const treeSeed = (seed ^ Math.imul(tree.year, 2654435761)) >>> 0;
     const rand = mulberry32(treeSeed + 17);
     const kind: TreeKind = tree.evergreen ? "evergreen" : "deciduous";
@@ -534,9 +591,7 @@ function buildForest(
     years.push({ rootY, height: shape.height, accent: `#${accent.getHexString()}` });
   });
 
-  const great = layout.greatTree;
   const greatRand = mulberry32(seed + 4049);
-  const greatShape = buildTree("great", seed + 4051, { bare });
   const greatRootY = groundAt(sampler, great.x, great.z) - 0.04;
   const greatRotation = -0.24 + (greatRand() - 0.5) * 0.6;
   const greatRoot = rootMatrix(great.x, greatRootY, great.z, greatRotation, great.scale);
@@ -563,6 +618,7 @@ function buildForest(
     branches,
     years,
     great: {
+      scale: great.scale,
       shape: greatShape,
       rootY: greatRootY,
       rotation: greatRotation,
@@ -644,10 +700,16 @@ export function Trees({
   const moteMeshRef = useRef<THREE.InstancedMesh>(null);
   const swayLevel = useRef(0);
 
-  const forest = useMemo(
-    () => buildForest(layout, palette, surfaceSampler, season, seed),
-    [layout, palette, season, seed, surfaceSampler],
-  );
+  // The great tree's shape depends only on its seed and whether the season
+  // leaves it bare; its size is the mesh scale, so its wood geometry never
+  // rebuilds as the timeline grows it.
+  const bare = palette.bareDeciduous;
+  const greatShape = useMemo(() => buildTree("great", seed + 4051, { bare }), [bare, seed]);
+  const placementKey = forestKey(layout);
+  const forest = useMemo(() => {
+    const { trees, great } = parseForestKey(placementKey);
+    return buildForest(trees, great, greatShape, palette, surfaceSampler, season, seed);
+  }, [greatShape, palette, placementKey, season, seed, surfaceSampler]);
 
   const blobDetail = quality === "low" ? 1 : 2;
   const blobBase = useMemo(() => createBlobGeometry(blobDetail), [blobDetail]);
@@ -664,12 +726,12 @@ export function Trees({
   );
   const greatWood = useMemo(
     () =>
-      createGreatWoodGeometry(forest.great.shape, {
+      createGreatWoodGeometry(greatShape, {
         bark: new THREE.Color(palette.trunk),
         moss: palette.snow ? null : new THREE.Color(palette.evergreen[1]).multiplyScalar(0.8),
         snow: palette.snow ? new THREE.Color(palette.snow) : null,
       }),
-    [forest.great.shape, palette.evergreen, palette.snow, palette.trunk],
+    [greatShape, palette.evergreen, palette.snow, palette.trunk],
   );
   const canopyMaterial = useMemo(() => createFoliageMaterial(), []);
   const coneMaterial = useMemo(() => createFoliageMaterial(), []);
@@ -891,7 +953,7 @@ export function Trees({
         material={woodMaterial}
         position={[great.x, forest.great.rootY, great.z]}
         rotation={[0, forest.great.rotation, 0]}
-        scale={great.scale}
+        scale={forest.great.scale}
         castShadow={shadows}
         receiveShadow={shadows}
         onClick={(event) => {
@@ -903,7 +965,7 @@ export function Trees({
       {glowing ? (
         <group
           position={[great.x, forest.great.rootY, great.z]}
-          scale={great.scale}
+          scale={forest.great.scale}
         >
           <group ref={moteRef}>
             <instancedMesh

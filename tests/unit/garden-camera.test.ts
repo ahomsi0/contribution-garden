@@ -10,6 +10,7 @@ import {
   type Vec3,
 } from "@/components/garden/world/camera";
 import { GREAT_TREE_POSITION } from "@/components/garden/world/mapping";
+import { createPhotorealIslandEdge } from "@/components/garden/photoreal-geometry";
 
 const DEG = Math.PI / 180;
 /** The top bar and weather switch end about 16° above the view axis. */
@@ -151,4 +152,69 @@ test("a tall phone frame crops the island's sides instead of zooming far out", (
   const narrow = cameraFraming(large.radius, large.top, WATERFALL, { aspect: 0.7 });
   assert.equal(phone.distance, narrow.distance);
   assert.ok(phone.distance < desktop.distance * 1.5, `phone distance ${phone.distance}`);
+});
+
+/**
+ * Distances and target heights the original fine search (111 heights x 32
+ * bisection steps) produced for three cases, recorded before the search was
+ * made cheaper.
+ */
+const ringPeaks = Array.from({ length: 15 }, (_, i) => {
+  const a = -0.24 + 0.35 + (i / 15) * Math.PI * 2;
+  const scale = 0.8 + (i % 5) * 0.2;
+  return {
+    x: Math.cos(a) * 9.88,
+    z: Math.sin(a) * 9.88,
+    top: -0.6 + 3.45 * scale,
+    crownRadius: 1.6 * scale,
+  };
+});
+const heavyEdge = createPhotorealIslandEdge({ radius: 13, quality: "high", seed: 42 });
+const recorded: Array<{ name: string; frame: () => CameraFraming; distance: number; targetY: number }> = [
+  {
+    name: "small island",
+    frame: () => cameraFraming(9, GROUND + GREAT_TREE_TOP * 0.9, WATERFALL),
+    distance: 23.639,
+    targetY: -0.6,
+  },
+  {
+    name: "full-grown island with year trees and a real rim",
+    frame: () =>
+      cameraFraming(13, GROUND + GREAT_TREE_TOP * 2.1, WATERFALL, {
+        aspect: 1.6,
+        peaks: ringPeaks,
+        rimRadiusAt: heavyEdge.rimRadiusAt,
+      }),
+    distance: 39.503,
+    targetY: 2.1,
+  },
+  {
+    name: "phone frame",
+    frame: () => cameraFraming(11, 8, 0.4, { aspect: 375 / 812 }),
+    distance: 43.198,
+    targetY: -0.4,
+  },
+];
+
+test("the framing search stays within 2% of the original fine search", () => {
+  for (const { name, frame, distance, targetY } of recorded) {
+    const framing = frame();
+    assert.ok(
+      Math.abs(framing.distance - distance) <= distance * 0.02,
+      `${name}: distance ${framing.distance} vs ${distance}`,
+    );
+    assert.ok(
+      Math.abs(framing.target[1] - targetY) <= distance * 0.02,
+      `${name}: target height ${framing.target[1]} vs ${targetY}`,
+    );
+  }
+});
+
+test("cameraFraming costs under 5 ms a call", () => {
+  const heavy = recorded[1].frame;
+  heavy();
+  const started = performance.now();
+  for (let index = 0; index < 20; index += 1) heavy();
+  const average = (performance.now() - started) / 20;
+  assert.ok(average < 5, `cameraFraming took ${average.toFixed(2)} ms a call`);
 });

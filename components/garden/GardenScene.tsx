@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
@@ -305,6 +306,27 @@ function waterfallChannelObstacles(
   });
 }
 
+/** How far the canvas aspect must move before the camera re-frames. */
+const ASPECT_TOLERANCE = 0.05;
+/** How long a resize must rest before the camera re-frames, ms. */
+const ASPECT_SETTLE_MS = 200;
+
+/**
+ * The canvas aspect ratio, updated only once a resize has settled and moved
+ * it by more than ASPECT_TOLERANCE, so dragging a window edge doesn't
+ * re-frame the camera on every pixel.
+ */
+function useSettledAspect() {
+  const live = useThree((state) => state.size.width / Math.max(1, state.size.height));
+  const [settled, setSettled] = useState(live);
+  useEffect(() => {
+    if (Math.abs(live - settled) <= ASPECT_TOLERANCE) return;
+    const timer = window.setTimeout(() => setSettled(live), ASPECT_SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [live, settled]);
+  return Math.round(settled * 100) / 100;
+}
+
 function GardenWorld({
   stats,
   days,
@@ -329,58 +351,93 @@ function GardenWorld({
     () => worldPalette(season, timeOfDay),
     [season, timeOfDay],
   );
-  const { layout, channel } = useMemo(() => {
-    const input: MappingInput = {
+  // The whole history, ignoring visibleThrough. Health, season and streak
+  // only change counts the full layout's users (tree obstacles and camera
+  // framing) never read, so they are fixed here and timeline playback leaves
+  // this alone.
+  const fullHistory = useMemo(
+    () =>
+      ({
+        days,
+        stats: { pullRequests: 0, issues: 0, repositories: stats.repositories, streak: 0 },
+        activity: 0,
+        season: "summer",
+        seed,
+        density,
+      }) satisfies MappingInput,
+    [days, density, seed, stats.repositories],
+  );
+  const fullDraft = useMemo(() => computeGardenLayout(fullHistory), [fullHistory]);
+  const fullRadius = fullDraft.islandRadius;
+  const { x: fullPondX, z: fullPondZ, scale: fullPondScale } = fullDraft.pond;
+  // Year trees keep off the waterfall channel at every size the island grows
+  // through, from its first year to the full history, so a tree's place on
+  // the ring never depends on how much of the timeline shows. The island
+  // radius and pond don't depend on obstacles, so the draft above tells us
+  // where the channel runs.
+  const { fullChannel, treeObstacles } = useMemo(() => {
+    const pond = { x: fullPondX, z: fullPondZ, scale: fullPondScale };
+    const full = waterfallChannelObstacles(fullRadius, pond, quality, seed);
+    return {
+      fullChannel: full,
+      treeObstacles: [
+        ...waterfallChannelObstacles(islandRadiusForSpan(1), pond, quality, seed),
+        ...full,
+      ],
+    };
+  }, [fullPondScale, fullPondX, fullPondZ, fullRadius, quality, seed]);
+  const fullLayout = useMemo(
+    () => computeGardenLayout({ ...fullHistory, obstacles: treeObstacles }),
+    [fullHistory, treeObstacles],
+  );
+
+  // What the timeline shows. This is a new object on every step; everything
+  // downstream depends on its primitives, not on its identity.
+  const layout = useMemo(
+    () =>
+      computeGardenLayout({
+        days,
+        visibleThrough,
+        stats: {
+          pullRequests: stats.pullRequests,
+          issues: stats.issues,
+          repositories: stats.repositories,
+          streak: stats.streak,
+        },
+        activity: health,
+        season,
+        seed,
+        density,
+        obstacles: treeObstacles,
+      }),
+    [
       days,
-      stats: {
-        pullRequests: stats.pullRequests,
-        issues: stats.issues,
-        repositories: stats.repositories,
-        streak: stats.streak,
-      },
-      activity: health,
+      density,
+      health,
       season,
       seed,
-      density,
-    };
-    // Year trees keep off the waterfall channel at every size the island
-    // grows through, from its first year to the full history, so a tree's
-    // place on the ring never depends on how much of the timeline shows.
-    // The island radius and pond don't depend on obstacles, so a first pass
-    // without them tells us where the channel runs.
-    const full = computeGardenLayout(input);
-    const treeObstacles = [
-      ...waterfallChannelObstacles(islandRadiusForSpan(1), full.pond, quality, seed),
-      ...waterfallChannelObstacles(full.islandRadius, full.pond, quality, seed),
-    ];
-    const visibleLayout = computeGardenLayout({
-      ...input,
+      stats.issues,
+      stats.pullRequests,
+      stats.repositories,
+      stats.streak,
+      treeObstacles,
       visibleThrough,
-      obstacles: treeObstacles,
-    });
-    return {
-      layout: visibleLayout,
-      channel: waterfallChannelObstacles(
-        visibleLayout.islandRadius,
-        visibleLayout.pond,
+    ],
+  );
+  const islandRadius = layout.islandRadius;
+  const { x: pondX, z: pondZ, scale: pondScale } = layout.pond;
+  // The waterfall channel at the visible island size: flora keeps off it and
+  // its last circle is where the fall pours over the rim.
+  const channel = useMemo(
+    () =>
+      waterfallChannelObstacles(
+        islandRadius,
+        { x: pondX, z: pondZ, scale: pondScale },
         quality,
         seed,
       ),
-    };
-  }, [
-    days,
-    density,
-    health,
-    quality,
-    season,
-    seed,
-    stats.issues,
-    stats.pullRequests,
-    stats.repositories,
-    stats.streak,
-    visibleThrough,
-  ]);
-  const islandRadius = layout.islandRadius;
+    [islandRadius, pondScale, pondX, pondZ, quality, seed],
+  );
   // Same radius and seed as the Island mesh, so everything placed with it
   // stays grounded as the island grows with the years of history.
   const surfaceSampler = useMemo(
@@ -403,31 +460,36 @@ function GardenWorld({
 
   // The channel's last circle sits on the rim point the waterfall pours over.
   const waterfall = channel[channel.length - 1];
-  const islandEdge = useMemo(
-    () => createPhotorealIslandEdge({ radius: islandRadius, quality, seed }),
-    [islandRadius, quality, seed],
+
+  // The camera frames the full-history garden, so it holds still while the
+  // timeline plays and the island grows into the frame.
+  const fullSampler = useMemo(
+    () => createPhotorealIslandSurfaceSampler({ radius: fullRadius, quality, seed }),
+    [fullRadius, quality, seed],
   );
-  const aspect = useThree(
-    (state) =>
-      Math.round((state.size.width / Math.max(1, state.size.height)) * 20) / 20,
+  const fullEdge = useMemo(
+    () => createPhotorealIslandEdge({ radius: fullRadius, quality, seed }),
+    [fullRadius, quality, seed],
   );
+  const fullWaterfall = fullChannel[fullChannel.length - 1];
+  const aspect = useSettledAspect();
   const framing = useMemo(() => {
     const groundAt = (x: number, z: number) =>
-      (surfaceSampler(x, z) ?? 0) + ISLAND_SURFACE_OFFSET;
-    const great = layout.greatTree;
-    const peaks: FramingPeak[] = layout.yearTrees.map((tree) => ({
+      (fullSampler(x, z) ?? 0) + ISLAND_SURFACE_OFFSET;
+    const great = fullLayout.greatTree;
+    const peaks: FramingPeak[] = fullLayout.yearTrees.map((tree) => ({
       x: tree.x,
       z: tree.z,
       top: groundAt(tree.x, tree.z) + YEAR_TREE_TOP * tree.scale,
       crownRadius: YEAR_CROWN_RADIUS * tree.scale,
     }));
     return cameraFraming(
-      layout.islandRadius,
+      fullLayout.islandRadius,
       groundAt(great.x, great.z) + GREAT_TREE_TOP * great.scale,
-      Math.atan2(waterfall.z, waterfall.x),
-      { aspect, greatTree: great, peaks, rimRadiusAt: islandEdge.rimRadiusAt },
+      Math.atan2(fullWaterfall.z, fullWaterfall.x),
+      { aspect, greatTree: great, peaks, rimRadiusAt: fullEdge.rimRadiusAt },
     );
-  }, [aspect, islandEdge, layout, surfaceSampler, waterfall]);
+  }, [aspect, fullEdge, fullLayout, fullSampler, fullWaterfall]);
   const orbiting = !walkthrough && !flythrough;
 
   return (
@@ -453,8 +515,11 @@ function GardenWorld({
       />
       <Water
         health={health}
-        layout={layout}
+        islandRadius={islandRadius}
         palette={world}
+        pondScale={pondScale}
+        pondX={pondX}
+        pondZ={pondZ}
         quality={quality}
         reducedMotion={reducedMotion}
         season={season}
@@ -480,8 +545,10 @@ function GardenWorld({
       />
       <Meadow
         days={days}
-        layout={layout}
         palette={world}
+        pondScale={pondScale}
+        pondX={pondX}
+        pondZ={pondZ}
         quality={quality}
         reducedMotion={reducedMotion}
         season={season}
@@ -552,20 +619,45 @@ function GardenWorld({
   );
 }
 
-interface FramingTween {
-  fromTarget: THREE.Vector3;
-  toTarget: THREE.Vector3;
-  from: THREE.Spherical;
-  to: THREE.Spherical;
-  elapsed: number;
+/** Where the orbit camera is heading: its target and offset around it. */
+interface FramingGoal {
+  target: THREE.Vector3;
+  spherical: THREE.Spherical;
+}
+
+/** Per-component follow state: target x, y, z, then radius, phi, theta. */
+const FOLLOW_COMPONENTS = 6;
+
+/**
+ * A critically damped step from `current` toward `goal` that carries its
+ * velocity between frames (and between goals), so a new goal mid-ease bends
+ * the motion instead of restarting it. `velocity[index]` is updated in place.
+ */
+function smoothDamp(
+  current: number,
+  goal: number,
+  velocity: Float64Array,
+  index: number,
+  smoothTime: number,
+  delta: number,
+) {
+  const omega = 2 / smoothTime;
+  const x = omega * delta;
+  const decay = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  const change = current - goal;
+  const temp = (velocity[index] + omega * change) * delta;
+  velocity[index] = (velocity[index] - omega * temp) * decay;
+  return goal + (change + temp) * decay;
 }
 
 /**
  * The orbit camera. It starts at the framing for this island and, when the
- * framing changes (another user, or the timeline growing the island), eases
- * there over REFRAME_SECONDS instead of jumping. Once the user has orbited or
- * zoomed, a re-frame keeps their viewing direction and only rescales the
- * distance and moves the target. Grabbing the controls cancels an ease.
+ * framing changes (another user, or a resize), follows there with a
+ * critically damped ease instead of jumping. A framing that arrives mid-ease
+ * continues from the camera's current position and velocity. Once the user
+ * has orbited or zoomed, a re-frame keeps their viewing direction and only
+ * rescales the distance and moves the target. Grabbing the controls cancels
+ * an ease.
  */
 function OrbitRig({
   enabled,
@@ -581,33 +673,29 @@ function OrbitRig({
   const framed = useRef<CameraFraming | null>(null);
   const stale = useRef(false);
   const userMoved = useRef(false);
-  const tween = useRef<FramingTween | null>(null);
+  const goal = useRef<FramingGoal | null>(null);
   const scratch = useMemo(
-    () => ({ spherical: new THREE.Spherical(), offset: new THREE.Vector3() }),
+    () => ({
+      spherical: new THREE.Spherical(),
+      offset: new THREE.Vector3(),
+      velocity: new Float64Array(FOLLOW_COMPONENTS),
+    }),
     [],
   );
 
-  const applyTween = (active: FramingTween, amount: number) => {
+  const place = (target: THREE.Vector3, spherical: THREE.Spherical) => {
     const orbit = controls.current;
     if (!orbit) return;
-    const { from, to } = active;
-    const turn =
-      THREE.MathUtils.euclideanModulo(to.theta - from.theta + Math.PI, Math.PI * 2) -
-      Math.PI;
-    scratch.spherical.set(
-      THREE.MathUtils.lerp(from.radius, to.radius, amount),
-      THREE.MathUtils.lerp(from.phi, to.phi, amount),
-      from.theta + turn * amount,
-    );
-    orbit.target.lerpVectors(active.fromTarget, active.toTarget, amount);
-    scratch.offset.setFromSpherical(scratch.spherical);
-    camera.position.copy(orbit.target).add(scratch.offset);
-    camera.lookAt(orbit.target);
+    orbit.target.copy(target);
+    scratch.offset.setFromSpherical(spherical);
+    camera.position.copy(target).add(scratch.offset);
+    camera.lookAt(target);
   };
 
-  const finishTween = () => {
+  const finishFollow = () => {
     const orbit = controls.current;
-    tween.current = null;
+    goal.current = null;
+    scratch.velocity.fill(0);
     if (!orbit || !framed.current) return;
     orbit.minDistance = framed.current.minDistance;
     orbit.maxDistance = framed.current.maxDistance;
@@ -633,7 +721,7 @@ function OrbitRig({
     if (!enabled) {
       // A flythrough or walk owns the camera; ease back to the framing from
       // wherever it leaves the camera once orbiting resumes.
-      finishTween();
+      finishFollow();
       stale.current = true;
       return;
     }
@@ -642,6 +730,8 @@ function OrbitRig({
     framed.current = framing;
 
     const toTarget = new THREE.Vector3(...framing.target);
+    // Mid-ease this is wherever the camera has got to, and the follow keeps
+    // its velocity.
     const from = new THREE.Spherical().setFromVector3(
       camera.position.clone().sub(orbit.target),
     );
@@ -658,38 +748,61 @@ function OrbitRig({
         new THREE.Vector3(...framing.position).sub(toTarget),
       );
     }
-    const next: FramingTween = {
-      fromTarget: orbit.target.clone(),
-      toTarget,
-      from,
-      to,
-      elapsed: 0,
-    };
     if (reducedMotion) {
-      applyTween(next, 1);
-      finishTween();
+      place(toTarget, to);
+      finishFollow();
       orbit.update();
       return;
     }
     // Open the zoom limits while easing so the controls never clamp mid-way.
     orbit.minDistance = 0;
     orbit.maxDistance = Infinity;
-    tween.current = next;
-    // applyTween and finishTween only touch refs; they need not be deps.
+    goal.current = { target: toTarget, spherical: to };
+    // place and finishFollow only touch refs; they need not be deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [camera, enabled, framing, reducedMotion]);
 
   useFrame((_, delta) => {
-    const active = tween.current;
-    if (!active || !enabled) return;
-    active.elapsed += Math.min(delta, 0.1);
-    const progress = clamp01(active.elapsed / REFRAME_SECONDS);
-    const eased =
-      progress < 0.5
-        ? 4 * progress * progress * progress
-        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-    applyTween(active, eased);
-    if (progress >= 1) finishTween();
+    const active = goal.current;
+    const orbit = controls.current;
+    if (!active || !enabled || !orbit) return;
+    const step = Math.min(delta, 0.1);
+    const smoothTime = REFRAME_SECONDS / 3;
+    const velocity = scratch.velocity;
+    const current = scratch.spherical.setFromVector3(
+      scratch.offset.copy(camera.position).sub(orbit.target),
+    );
+    // Turn the short way round.
+    const theta =
+      current.theta +
+      THREE.MathUtils.euclideanModulo(
+        active.spherical.theta - current.theta + Math.PI,
+        Math.PI * 2,
+      ) -
+      Math.PI;
+    const target = orbit.target;
+    target.set(
+      smoothDamp(target.x, active.target.x, velocity, 0, smoothTime, step),
+      smoothDamp(target.y, active.target.y, velocity, 1, smoothTime, step),
+      smoothDamp(target.z, active.target.z, velocity, 2, smoothTime, step),
+    );
+    current.set(
+      smoothDamp(current.radius, active.spherical.radius, velocity, 3, smoothTime, step),
+      smoothDamp(current.phi, active.spherical.phi, velocity, 4, smoothTime, step),
+      smoothDamp(current.theta, theta, velocity, 5, smoothTime, step),
+    );
+    place(target, current);
+
+    const settled =
+      target.distanceTo(active.target) < 0.002 &&
+      Math.abs(current.radius - active.spherical.radius) < 0.002 &&
+      Math.abs(current.phi - active.spherical.phi) < 1e-4 &&
+      Math.abs(current.theta - theta) < 1e-4 &&
+      velocity.every((speed) => Math.abs(speed) < 1e-3);
+    if (settled) {
+      place(active.target, active.spherical);
+      finishFollow();
+    }
   });
 
   return (
@@ -705,7 +818,7 @@ function OrbitRig({
       zoomSpeed={0.65}
       onStart={() => {
         userMoved.current = true;
-        if (tween.current) finishTween();
+        if (goal.current) finishFollow();
       }}
     />
   );

@@ -790,7 +790,15 @@ export function paintPhotorealIsland(
   const cliff = new THREE.Color(paint.cliff);
   const cliffLight = new THREE.Color(paint.cliffLight);
   const color = new THREE.Color();
-  const colors = new Float32Array(count * 3);
+  // Repaint in place when the geometry already carries colours (a season
+  // change), so the GPU buffer is updated rather than replaced.
+  const existing = geometry.getAttribute("color") as THREE.BufferAttribute | undefined;
+  const reuse =
+    existing !== undefined &&
+    existing.itemSize === 3 &&
+    existing.count === count &&
+    existing.array instanceof Float32Array;
+  const colors = reuse ? (existing.array as Float32Array) : new Float32Array(count * 3);
 
   for (let vertex = 0; vertex < count; vertex += 1) {
     const x = position.getX(vertex);
@@ -832,6 +840,7 @@ export function paintPhotorealIsland(
     colors[vertex * 3 + 2] = color.b;
   }
 
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  if (reuse) existing.needsUpdate = true;
+  else geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   return geometry;
 }

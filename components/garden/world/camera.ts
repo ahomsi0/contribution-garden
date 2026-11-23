@@ -91,6 +91,17 @@ const RIM_Y = -0.6;
 const GREAT_CROWN_RATIO = 0.5;
 
 const DEG = Math.PI / 180;
+/** Target heights the search considers, world y. */
+const MIN_TARGET_Y = -3;
+const MAX_TARGET_Y = 8;
+/** Heights in the coarse pass, golden-section steps in the refinement. */
+const COARSE_HEIGHTS = 12;
+const REFINE_STEPS = 8;
+/** Bisection steps on the distance: about 1e-5 of the search range. */
+const BISECTION_STEPS = 20;
+/** The 0.1-spaced heights the final centring pass compares. */
+const BALANCE_HEIGHTS = Math.round((MAX_TARGET_Y - MIN_TARGET_Y) / 0.1) + 1;
+const GOLDEN = (Math.sqrt(5) - 1) / 2;
 
 interface Pose {
   /** Unit vector from target to camera. */
@@ -207,50 +218,129 @@ export function cameraFraming(
   ];
   const rim = rimPoints(options.rimRadiusAt ?? (() => islandRadius));
 
-  // Clearances in degrees, each positive when everything fits.
+  // With the target at (0, targetY, 0) and the camera `distance` back along
+  // the view axis, a point's depth, horizontal and vertical offsets are all
+  // linear in targetY and distance, so each point is reduced to three
+  // dot products once. `right` has no y component and is perpendicular to
+  // `back` and `up`, which keeps the offsets free of the distance term.
+  const project = (points: Vec3[]) => {
+    const along = new Float64Array(points.length);
+    const across = new Float64Array(points.length);
+    const lift = new Float64Array(points.length);
+    points.forEach(([x, y, z], index) => {
+      along[index] = x * pose.back[0] + y * pose.back[1] + z * pose.back[2];
+      across[index] = x * pose.right[0] + z * pose.right[2];
+      lift[index] = x * pose.up[0] + y * pose.up[1] + z * pose.up[2];
+    });
+    return { along, across, lift, count: points.length };
+  };
+  const topPoints = project(tops);
+  const rimProjected = project(rim);
+  const toDegrees = (ratio: number) => Math.atan(ratio) / DEG;
+
+  // Clearances in degrees, each positive when everything fits. Angles are
+  // monotonic in their tangent, so only the extreme tangents need an atan.
   const clearances = (targetY: number, distance: number) => {
-    const target: Vec3 = [0, targetY, 0];
-    let top = Infinity;
-    let bottom = Infinity;
-    let side = Infinity;
-    for (const point of tops) {
-      const [, v] = viewAngles(pose, target, distance, point);
-      top = Math.min(top, topLimit - v);
+    const depthBase = distance + targetY * pose.back[1];
+    const liftBase = targetY * pose.up[1];
+    let topRatio = -Infinity;
+    for (let index = 0; index < topPoints.count; index += 1) {
+      const depth = depthBase - topPoints.along[index];
+      const ratio =
+        depth <= 0.01 ? Infinity : (topPoints.lift[index] - liftBase) / depth;
+      if (ratio > topRatio) topRatio = ratio;
     }
-    for (const point of rim) {
-      const [h, v] = viewAngles(pose, target, distance, point);
-      top = Math.min(top, topLimit - v);
-      bottom = Math.min(bottom, v - bottomLimit);
-      side = Math.min(side, sideLimit - Math.abs(h));
+    let rimHigh = -Infinity;
+    let rimLow = Infinity;
+    let rimWide = 0;
+    for (let index = 0; index < rimProjected.count; index += 1) {
+      const depth = depthBase - rimProjected.along[index];
+      if (depth <= 0.01) {
+        // Behind the camera: the old per-point maths called this 90°.
+        rimHigh = Infinity;
+        rimWide = Infinity;
+        continue;
+      }
+      const vertical = (rimProjected.lift[index] - liftBase) / depth;
+      const horizontal = Math.abs(rimProjected.across[index] / depth);
+      if (vertical > rimHigh) rimHigh = vertical;
+      if (vertical < rimLow) rimLow = vertical;
+      if (horizontal > rimWide) rimWide = horizontal;
     }
-    return { top, bottom, side };
+    const highest = Math.max(topRatio, rimHigh);
+    return {
+      top: highest === -Infinity ? Infinity : topLimit - toDegrees(highest),
+      bottom: rimLow === Infinity ? Infinity : toDegrees(rimLow) - bottomLimit,
+      side: rimProjected.count === 0 ? Infinity : sideLimit - toDegrees(rimWide),
+    };
   };
   const slack = (targetY: number, distance: number) => {
     const { top, bottom, side } = clearances(targetY, distance);
     return Math.min(top, bottom, side);
   };
 
-  const heights = Array.from({ length: 111 }, (_, index) => -3 + index * 0.1);
-  let closest = Infinity;
-  for (const targetY of heights) {
-    let low = islandRadius * 1.2;
-    let high = islandRadius * 6;
-    if (slack(targetY, high) < 0) continue;
-    for (let step = 0; step < 32; step += 1) {
+  // The closest distance at which everything fits for one target height.
+  const lowestDistance = islandRadius * 1.2;
+  const highestDistance = islandRadius * 6;
+  const closestAt = (targetY: number) => {
+    let low = lowestDistance;
+    let high = highestDistance;
+    if (slack(targetY, high) < 0) return Infinity;
+    for (let step = 0; step < BISECTION_STEPS; step += 1) {
       const middle = (low + high) / 2;
       if (slack(targetY, middle) >= 0) high = middle;
       else low = middle;
     }
-    closest = Math.min(closest, high);
+    return high;
+  };
+
+  // A coarse pass over the target heights, then a golden-section search
+  // around the best of them.
+  let bestHeight = 0;
+  let closest = Infinity;
+  for (let index = 0; index < COARSE_HEIGHTS; index += 1) {
+    const height = MIN_TARGET_Y + (index * (MAX_TARGET_Y - MIN_TARGET_Y)) / (COARSE_HEIGHTS - 1);
+    const reach = closestAt(height);
+    if (reach < closest) {
+      closest = reach;
+      bestHeight = height;
+    }
   }
-  if (!Number.isFinite(closest)) closest = islandRadius * 4;
+  if (Number.isFinite(closest)) {
+    const spacing = (MAX_TARGET_Y - MIN_TARGET_Y) / (COARSE_HEIGHTS - 1);
+    let low = Math.max(MIN_TARGET_Y, bestHeight - spacing);
+    let high = Math.min(MAX_TARGET_Y, bestHeight + spacing);
+    let left = high - GOLDEN * (high - low);
+    let right = low + GOLDEN * (high - low);
+    let leftReach = closestAt(left);
+    let rightReach = closestAt(right);
+    for (let step = 0; step < REFINE_STEPS; step += 1) {
+      if (leftReach <= rightReach) {
+        high = right;
+        right = left;
+        rightReach = leftReach;
+        left = high - GOLDEN * (high - low);
+        leftReach = closestAt(left);
+      } else {
+        low = left;
+        left = right;
+        leftReach = rightReach;
+        right = low + GOLDEN * (high - low);
+        rightReach = closestAt(right);
+      }
+    }
+    closest = Math.min(closest, leftReach, rightReach);
+  } else {
+    closest = islandRadius * 4;
+  }
 
   // A little breathing room, then the target height that best centres the
   // content vertically in the clear band at that distance.
   const distance = closest * 1.03;
   let targetY = 0;
   let bestBalance = -Infinity;
-  for (const height of heights) {
+  for (let index = 0; index < BALANCE_HEIGHTS; index += 1) {
+    const height = MIN_TARGET_Y + index * 0.1;
     const { top, bottom, side } = clearances(height, distance);
     if (side < 0) continue;
     const balance = Math.min(top, bottom);

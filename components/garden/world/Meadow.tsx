@@ -14,10 +14,12 @@ import type {
   GardenWeather,
 } from "../types";
 import { ISLAND_SURFACE_OFFSET } from "./Island";
-import { intensityLevel, type GardenLayout } from "./mapping";
+import { intensityLevel } from "./mapping";
 import {
   createFallbackMeadow,
   createMeadowLayout,
+  isChronological,
+  visibleTuftCount,
   type MeadowTuft,
 } from "./meadow-layout";
 import type { WorldPalette } from "./palette";
@@ -25,7 +27,10 @@ import type { TierSettings } from "./tiers";
 
 export interface MeadowProps {
   days: GardenDay[];
-  layout: GardenLayout;
+  /** The pond, as primitives, so a new layout object never rebuilds the meadow. */
+  pondX: number;
+  pondZ: number;
+  pondScale: number;
   palette: WorldPalette;
   tier: TierSettings;
   /** Blade resolution: 2 segments on low, 3 otherwise. */
@@ -249,7 +254,9 @@ function formatGardenDate(value: string) {
 
 export function Meadow({
   days,
-  layout,
+  pondX,
+  pondZ,
+  pondScale,
   palette,
   tier,
   quality,
@@ -264,43 +271,50 @@ export function Meadow({
 }: MeadowProps) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const density = tier.density;
-  const { x: pondX, z: pondZ, scale: pondScale } = layout.pond;
 
+  // The whole history's tufts are built once and revealed by instance count
+  // as the timeline plays. Only an out-of-order calendar, where the visible
+  // tufts are not a prefix, falls back to rebuilding per step.
+  const chronological = useMemo(() => isChronological(days), [days]);
+  const layoutThrough = chronological ? undefined : visibleThrough;
+  // Lifetime commits only size the no-calendar fallback; with a calendar,
+  // their playback scaling must not rebuild the meadow.
+  const fallbackCommits = days.length > 0 ? 0 : stats.commits;
   const tufts = useMemo<MeadowTuft[]>(() => {
     const pond = { x: pondX, z: pondZ, scale: pondScale };
     if (days.length > 0) {
-      return createMeadowLayout({ days, density, seed, visibleThrough, pond });
+      return createMeadowLayout({ days, density, seed, visibleThrough: layoutThrough, pond });
     }
-    return createFallbackMeadow(stats.commits, density, seed, pond);
-  }, [days, density, pondScale, pondX, pondZ, seed, stats.commits, visibleThrough]);
+    return createFallbackMeadow(fallbackCommits, density, seed, pond);
+  }, [days, density, fallbackCommits, layoutThrough, pondScale, pondX, pondZ, seed]);
+  const shownCount = useMemo(
+    () => (chronological ? visibleTuftCount(tufts, days, visibleThrough) : tufts.length),
+    [chronological, days, tufts, visibleThrough],
+  );
 
   const shades = useMemo(() => meadowShades(palette, season), [palette, season]);
 
   const segments = quality === "low" ? 2 : 3;
+  const tuftCount = tufts.length;
   const geometry = useMemo(() => {
     const tuftGeometry = createTuftGeometry(segments);
-    const tips = new Float32Array(Math.max(1, tufts.length) * 3);
-    tufts.forEach((tuft, index) => {
-      const tip = tuftTip(tuft, shades);
-      tips[index * 3] = tip.r;
-      tips[index * 3 + 1] = tip.g;
-      tips[index * 3 + 2] = tip.b;
-    });
+    const tips = new Float32Array(Math.max(1, tuftCount) * 3);
     tuftGeometry.setAttribute("aTip", new THREE.InstancedBufferAttribute(tips, 3));
     return tuftGeometry;
-  }, [segments, shades, tufts]);
+  }, [segments, tuftCount]);
   useEffect(() => () => geometry.dispose(), [geometry]);
 
   const material = useMemo(() => createMeadowMaterial(), []);
   useEffect(() => () => material.dispose(), [material]);
   const wind = weather === "wind" ? 1 : weather === "rain" ? 0.62 : 0.36;
   const sway = reducedMotion ? 0 : 0.17 * wind;
+  const winter = season === "winter";
 
+  // Placement: only when the tufts, the ground or winter's short grass change.
   useLayoutEffect(() => {
     const instanced = mesh.current;
     if (!instanced) return;
     const dummy = new THREE.Object3D();
-    const winter = season === "winter";
     tufts.forEach((tuft, index) => {
       const level = Math.min(4, Math.max(1, tuft.level));
       const jitter = Math.min(
@@ -323,13 +337,37 @@ export function Meadow({
       dummy.scale.set(width, height, width);
       dummy.updateMatrix();
       instanced.setMatrixAt(index, dummy.matrix);
-      instanced.setColorAt(index, shades.root[level]);
     });
     instanced.instanceMatrix.needsUpdate = true;
-    if (instanced.instanceColor) instanced.instanceColor.needsUpdate = true;
-    // Refresh the culling and raycast bounds for the new instance spread.
+    // Bounds cover every tuft, revealed or not, so culling never clips the
+    // meadow as it fills in.
+    const shown = instanced.count;
+    instanced.count = tufts.length;
     instanced.computeBoundingSphere();
-  }, [season, shades, surfaceSampler, tufts]);
+    instanced.count = shown;
+  }, [geometry, surfaceSampler, tufts, winter]);
+
+  // Colour: root per instance, tip in the geometry's aTip attribute.
+  useLayoutEffect(() => {
+    const instanced = mesh.current;
+    if (!instanced) return;
+    const tips = geometry.getAttribute("aTip") as THREE.InstancedBufferAttribute;
+    tufts.forEach((tuft, index) => {
+      const level = Math.min(4, Math.max(1, tuft.level));
+      instanced.setColorAt(index, shades.root[level]);
+      const tip = tuftTip(tuft, shades);
+      tips.setXYZ(index, tip.r, tip.g, tip.b);
+    });
+    tips.needsUpdate = true;
+    if (instanced.instanceColor) instanced.instanceColor.needsUpdate = true;
+  }, [geometry, shades, tufts]);
+
+  // Reveal: a cheap instance count, the only work most timeline steps do.
+  useLayoutEffect(() => {
+    const instanced = mesh.current;
+    if (!instanced) return;
+    instanced.count = Math.min(shownCount, tufts.length);
+  }, [geometry, shownCount, tufts]);
 
   useFrame((state) => {
     const uniforms = meadowUniforms(mesh.current);

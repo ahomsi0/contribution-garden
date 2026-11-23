@@ -492,7 +492,9 @@ function Birds({
 
 function Fireflies({
   count,
-  greatTree,
+  greatX,
+  greatZ,
+  greatScale,
   islandRadius,
   opacity,
   reducedMotion,
@@ -500,7 +502,10 @@ function Fireflies({
   seed,
 }: {
   count: number;
-  greatTree: GardenLayout["greatTree"];
+  greatX: number;
+  greatZ: number;
+  /** Rounded by the caller, so the swarm only moves when the tree grows visibly. */
+  greatScale: number;
   islandRadius: number;
   opacity: number;
   reducedMotion: boolean;
@@ -515,8 +520,8 @@ function Fireflies({
     // Per firefly: bob phase, drift radius, twinkle rate.
     const params = new Float32Array(count * 3);
     const treeShare = Math.ceil(count * 0.55);
-    const canopy = 5.5 * greatTree.scale;
-    const treeGround = groundY(sampler, greatTree.x, greatTree.z);
+    const canopy = 5.5 * greatScale;
+    const treeGround = groundY(sampler, greatX, greatZ);
     for (let index = 0; index < count; index += 1) {
       const angle = random() * TAU;
       let x: number;
@@ -525,8 +530,8 @@ function Fireflies({
       if (index < treeShare) {
         // Under and around the rim of the great tree's canopy.
         const reach = (0.25 + random() * 0.4) * canopy;
-        x = greatTree.x + Math.cos(angle) * reach;
-        z = greatTree.z + Math.sin(angle) * reach;
+        x = greatX + Math.cos(angle) * reach;
+        z = greatZ + Math.sin(angle) * reach;
         y = treeGround + (0.35 + random() * 0.4) * canopy;
       } else {
         // Low over the meadow.
@@ -550,7 +555,7 @@ function Fireflies({
       colors[index * 3 + 2] = FIREFLY_GLOW.b * level;
     }
     return { base: home, motion: params, positions: home.slice(), colors };
-  }, [count, greatTree.scale, greatTree.x, greatTree.z, islandRadius, sampler, seed]);
+  }, [count, greatScale, greatX, greatZ, islandRadius, sampler, seed]);
 
   useFrame((state) => {
     const target = points.current;
@@ -640,7 +645,9 @@ export function Life({
       {layout.fireflyCount > 0 ? (
         <Fireflies
           count={layout.fireflyCount}
-          greatTree={layout.greatTree}
+          greatScale={Math.round(layout.greatTree.scale * 20) / 20}
+          greatX={layout.greatTree.x}
+          greatZ={layout.greatTree.z}
           islandRadius={layout.islandRadius}
           opacity={glowTime ? 1 : FIREFLY_DAY_OPACITY}
           reducedMotion={reducedMotion}

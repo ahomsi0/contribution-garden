@@ -4,6 +4,7 @@ import {
   createMeadowLayout,
   meadowTuftBudget,
   type MeadowLayoutOptions,
+  visibleTuftCount,
 } from "@/components/garden/world/meadow-layout";
 
 const pond = { x: -2.35, z: 1.25, scale: 1 };
@@ -56,4 +57,17 @@ test("a heavy history is capped at the budget and drawn fuller", () => {
   assert.ok(tufts.some((tuft) => tuft.girth > 1));
   // Every day is still represented, so every day stays selectable.
   assert.equal(new Set(tufts.map((tuft) => tuft.dayIndex)).size, days.length);
+});
+
+test("the full meadow reveals by count: its first tufts are the visible days' tufts", () => {
+  const full = createMeadowLayout(options());
+  for (const through of ["2022-01-01", "2022-09-14", "2023-06-30", "2024-12-31"]) {
+    const cut = createMeadowLayout(options({ visibleThrough: through }));
+    const shown = visibleTuftCount(full, options().days, through);
+    assert.equal(shown, cut.length, `through ${through}`);
+    assert.deepEqual(full.slice(0, shown), cut, `through ${through}`);
+  }
+  assert.equal(visibleTuftCount(full, options().days, undefined), full.length);
+  assert.equal(visibleTuftCount(full, options().days, "2021-12-31"), 0);
+  assert.equal(visibleTuftCount([], [], "2023-01-01"), 0);
 });

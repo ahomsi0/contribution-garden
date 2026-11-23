@@ -17,12 +17,18 @@ import type {
   GardenWeather,
 } from "../types";
 import { ISLAND_SURFACE_OFFSET } from "./Island";
-import type { GardenLayout } from "./mapping";
 import type { WorldPalette } from "./palette";
 import type { TierSettings } from "./tiers";
 
 export interface WaterProps {
-  layout: GardenLayout;
+  /**
+   * The island and pond as primitives, so the water only rebuilds when one
+   * of them actually changes, not whenever a new layout object arrives.
+   */
+  islandRadius: number;
+  pondX: number;
+  pondZ: number;
+  pondScale: number;
   palette: WorldPalette;
   tier: TierSettings;
   /** Island mesh resolution; the waterfall follows the same cliff vertices. */
@@ -273,10 +279,11 @@ interface PondFrame {
 }
 
 function createPondFrame(
-  layout: GardenLayout,
+  cx: number,
+  cz: number,
+  scale: number,
   sampler: PhotorealIslandSurfaceSampler,
 ): PondFrame {
-  const { x: cx, z: cz, scale } = layout.pond;
   const semiX = POND_SEMI_X * scale;
   const semiZ = POND_SEMI_Z * scale;
   const surfaceY =
@@ -319,7 +326,10 @@ function createPondFrame(
 }
 
 export function Water({
-  layout,
+  islandRadius,
+  pondX,
+  pondZ,
+  pondScale,
   palette,
   tier,
   quality,
@@ -334,8 +344,8 @@ export function Water({
 }: WaterProps) {
   const frozen = season === "winter";
   const pond = useMemo(
-    () => createPondFrame(layout, surfaceSampler),
-    [layout, surfaceSampler],
+    () => createPondFrame(pondX, pondZ, pondScale, surfaceSampler),
+    [pondScale, pondX, pondZ, surfaceSampler],
   );
 
   return (
@@ -344,8 +354,9 @@ export function Water({
         frame={pond}
         frozen={frozen}
         health={health}
-        layout={layout}
         palette={palette}
+        pondX={pondX}
+        pondZ={pondZ}
         quality={quality}
         reducedMotion={reducedMotion}
         seed={seed + 83}
@@ -357,8 +368,10 @@ export function Water({
       <Waterfall
         frame={pond}
         frozen={frozen}
-        layout={layout}
+        islandRadius={islandRadius}
         palette={palette}
+        pondX={pondX}
+        pondZ={pondZ}
         quality={quality}
         reducedMotion={reducedMotion}
         seed={seed}
@@ -374,8 +387,9 @@ function Pond({
   frame,
   frozen,
   health,
-  layout,
   palette,
+  pondX,
+  pondZ,
   quality,
   reducedMotion,
   seed,
@@ -387,8 +401,9 @@ function Pond({
   frame: PondFrame;
   frozen: boolean;
   health: number;
-  layout: GardenLayout;
   palette: WorldPalette;
+  pondX: number;
+  pondZ: number;
   quality: GardenQuality;
   reducedMotion: boolean;
   seed: number;
@@ -485,7 +500,6 @@ function Pond({
     if (fish.current) fish.current.rotation.y = time * 0.24;
   });
 
-  const { x: pondX, z: pondZ } = layout.pond;
   const selectWater = (event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation();
     onSelect?.({
@@ -838,7 +852,9 @@ export function outflowRimPoint(
  * just outside the island mesh's own cliff vertices.
  */
 function createFallShape(
-  layout: GardenLayout,
+  islandRadius: number,
+  px: number,
+  pz: number,
   frame: PondFrame,
   sampler: PhotorealIslandSurfaceSampler,
   quality: GardenQuality,
@@ -846,8 +862,7 @@ function createFallShape(
   channelColor: THREE.Color,
   streamColor: THREE.Color,
 ): FallShape {
-  const edge = createPhotorealIslandEdge({ radius: layout.islandRadius, quality, seed });
-  const { x: px, z: pz } = layout.pond;
+  const edge = createPhotorealIslandEdge({ radius: islandRadius, quality, seed });
   const angle = outflowRimAngle(edge, px, pz);
   const outX = Math.cos(angle);
   const outZ = Math.sin(angle);
@@ -1033,8 +1048,10 @@ function createFallShape(
 function Waterfall({
   frame,
   frozen,
-  layout,
+  islandRadius,
   palette,
+  pondX,
+  pondZ,
   quality,
   reducedMotion,
   seed,
@@ -1044,8 +1061,10 @@ function Waterfall({
 }: {
   frame: PondFrame;
   frozen: boolean;
-  layout: GardenLayout;
+  islandRadius: number;
   palette: WorldPalette;
+  pondX: number;
+  pondZ: number;
   quality: GardenQuality;
   reducedMotion: boolean;
   seed: number;
@@ -1057,8 +1076,28 @@ function Waterfall({
   const shape = useMemo(() => {
     const channel = new THREE.Color(palette.water).lerp(new THREE.Color(palette.waterGlow), 0.4);
     const stream = new THREE.Color(palette.waterGlow).lerp(new THREE.Color("#ffffff"), 0.7);
-    return createFallShape(layout, frame, surfaceSampler, quality, seed, channel, stream);
-  }, [frame, layout, palette.water, palette.waterGlow, quality, seed, surfaceSampler]);
+    return createFallShape(
+      islandRadius,
+      pondX,
+      pondZ,
+      frame,
+      surfaceSampler,
+      quality,
+      seed,
+      channel,
+      stream,
+    );
+  }, [
+    frame,
+    islandRadius,
+    palette.water,
+    palette.waterGlow,
+    pondX,
+    pondZ,
+    quality,
+    seed,
+    surfaceSampler,
+  ]);
   const streaks = useMemo(() => createStreakTexture(seed + 211), [seed]);
   const iceColor = useMemo(
     () =>

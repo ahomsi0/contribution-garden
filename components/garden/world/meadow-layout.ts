@@ -207,6 +207,37 @@ export function createMeadowLayout({
 }
 
 /**
+ * How many of a full-history meadow's tufts belong to days on or before
+ * `visibleThrough`. Tufts come out in day order, so with a chronological
+ * calendar the visible ones are a prefix: drawing that many instances
+ * reveals the meadow without rebuilding it.
+ */
+export function visibleTuftCount(
+  tufts: ReadonlyArray<MeadowTuft>,
+  days: ReadonlyArray<MeadowDayInput>,
+  visibleThrough: string | undefined,
+) {
+  if (visibleThrough === undefined) return tufts.length;
+  let low = 0;
+  let high = tufts.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const day = days[tufts[middle].dayIndex];
+    if (day && day.date <= visibleThrough) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/** Whether the calendar runs in date order, so `visibleTuftCount` applies. */
+export function isChronological(days: ReadonlyArray<MeadowDayInput>) {
+  for (let index = 1; index < days.length; index += 1) {
+    if (days[index - 1].date > days[index].date) return false;
+  }
+  return true;
+}
+
+/**
  * The meadow when there is no contribution calendar: a loose scatter sized
  * by lifetime commits, kept off the path and the pond.
  */

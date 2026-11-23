@@ -77,6 +77,22 @@ test("painting gives a green top in summer and a snowy top in winter", () => {
   }
 });
 
+test("repainting for a new season reuses the colour attribute in place", () => {
+  const geometry = createPhotorealIslandGeometry({ radius: 10, quality: "low", seed: 11 });
+  const summer = worldPalette("summer", "day");
+  const winter = worldPalette("winter", "day");
+  paintPhotorealIsland(geometry, summer, 11);
+  const attribute = geometry.getAttribute("color");
+  const version = (attribute as { version: number }).version;
+  const vertex = groundVertices(geometry)[0];
+  const summerGreen = attribute.getY(vertex);
+  paintPhotorealIsland(geometry, winter, 11);
+  assert.equal(geometry.getAttribute("color"), attribute);
+  assert.ok((attribute as { version: number }).version > version, "marked for upload");
+  assert.notEqual(attribute.getY(vertex), summerGreen);
+  geometry.dispose();
+});
+
 test("tier settings only scale density, shadows, resolution and effects", () => {
   assert.equal(TIER_SETTINGS.low.shadows, false);
   assert.equal(TIER_SETTINGS.medium.shadowMapSize, 1024);

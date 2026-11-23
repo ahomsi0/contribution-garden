@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 import * as THREE from "three";
 
 import type { GardenQuality } from "../types";
@@ -30,10 +30,15 @@ export function Island({ radius, palette, tier, quality, seed }: IslandProps) {
   const [grassBase, grassHighlight] = palette.grass;
   const { soil, earth, cliff, cliffLight, snow } = palette;
 
-  const geometry = useMemo(() => {
-    const island = createPhotorealIslandGeometry({ radius, quality, seed });
+  // The mesh depends only on the island's size, resolution and seed. A season
+  // or time-of-day change repaints its vertex colours in place.
+  const geometry = useMemo(
+    () => createPhotorealIslandGeometry({ radius, quality, seed }),
+    [quality, radius, seed],
+  );
+  useLayoutEffect(() => {
     paintPhotorealIsland(
-      island,
+      geometry,
       {
         grass: [grassBase, grassHighlight],
         soil,
@@ -44,19 +49,7 @@ export function Island({ radius, palette, tier, quality, seed }: IslandProps) {
       },
       seed,
     );
-    return island;
-  }, [
-    cliff,
-    cliffLight,
-    earth,
-    grassBase,
-    grassHighlight,
-    quality,
-    radius,
-    seed,
-    snow,
-    soil,
-  ]);
+  }, [cliff, cliffLight, earth, geometry, grassBase, grassHighlight, seed, snow, soil]);
 
   // Material order follows PHOTOREAL_ISLAND_MATERIAL_INDEX: cliff, ground, soil.
   const materials = useMemo(
