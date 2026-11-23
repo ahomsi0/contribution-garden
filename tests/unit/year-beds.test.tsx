@@ -18,7 +18,12 @@ test("draws one titled bed per year and a stem per non-zero month", () => {
   assert.equal(html.match(/<title>/g)?.length, 2);
   assert.match(html, /<title>2024 · 8 contributions<\/title>/);
   assert.match(html, /<title>2025 · 900 contributions<\/title>/);
-  assert.equal(html.match(/<line /g)?.length, 3);
+  assert.doesNotMatch(html, /<line /);
+  const commands = [...html.matchAll(/<path d="([^"]*)"/g)].flatMap((m) => m[1].match(/M/g) ?? []);
+  assert.equal(commands.length, 3, "one M segment per non-zero month");
+  for (const bed of html.split("<g>").slice(1)) {
+    assert.ok((bed.match(/<path /g)?.length ?? 0) <= 4, "at most 4 paths per bed");
+  }
   assert.equal(html.match(/<circle /g)?.length, 1, "flower only on 2025's 900-month");
   assert.match(html, /role="img"/);
   assert.match(html, /aria-label="2024–2025: 908 contributions"/);

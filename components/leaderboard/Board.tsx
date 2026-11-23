@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import { formatCount } from "@/lib/rankings/format";
 import type { RankedUser } from "@/lib/rankings/snapshot";
 import { YearBeds } from "./YearBeds";
@@ -14,15 +14,16 @@ export interface BoardProps {
 
 export function Board({ slug, users, scaleMax }: BoardProps) {
   const [filter, setFilter] = useState("");
+  const deferredFilter = useDeferredValue(filter);
   const visible = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
+    const needle = deferredFilter.trim().toLowerCase();
     if (!needle) return users;
     return users.filter(
       (user) =>
         user.login.toLowerCase().includes(needle) ||
         (user.name ?? "").toLowerCase().includes(needle),
     );
-  }, [filter, users]);
+  }, [deferredFilter, users]);
 
   return (
     <section className="board" aria-label="Ranked gardeners">

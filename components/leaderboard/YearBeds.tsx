@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { stemValue } from "@/lib/rankings/bed-scale";
 import { formatCount } from "@/lib/rankings/format";
 import type { YearMonths } from "@/lib/rankings/snapshot";
@@ -26,7 +27,7 @@ function sum(values: readonly number[]): number {
 
 const round = (value: number) => Math.round(value * 100) / 100;
 
-export function YearBeds({ years, scaleMax, className }: YearBedsProps) {
+export const YearBeds = memo(function YearBeds({ years, scaleMax, className }: YearBedsProps) {
   const total = years.reduce((acc, year) => acc + sum(year.months), 0);
   const label =
     years.length === 0
@@ -47,27 +48,29 @@ export function YearBeds({ years, scaleMax, className }: YearBedsProps) {
         const x0 = PAD + yearIndex * (bedWidth + GAP);
         const values = year.months.map((value) => stemValue(value, scaleMax));
         const peak = values.indexOf(Math.max(...values));
+        const paths = ["", "", "", ""];
+        values.forEach((value, month) => {
+          if (value <= 0) return;
+          const x = x0 + 1.5 + (month * (bedWidth - 3)) / 11;
+          const top = GROUND - (3 + value * (MAX_STEM - 3));
+          paths[Math.min(3, Math.floor(value * 4))] += `M${round(x)} ${GROUND}V${round(top)}`;
+        });
         return (
           <g key={year.year}>
             <title>{`${year.year} · ${formatCount(sum(year.months))} contributions`}</title>
             <rect x={round(x0)} y={GROUND} width={round(bedWidth)} height={6} rx={2} fill={SOIL} />
-            {values.map((value, month) => {
-              if (value <= 0) return null;
-              const x = x0 + 1.5 + (month * (bedWidth - 3)) / 11;
-              const top = GROUND - (3 + value * (MAX_STEM - 3));
-              return (
-                <line
-                  key={month}
-                  x1={round(x)}
-                  y1={GROUND}
-                  x2={round(x)}
-                  y2={round(top)}
-                  stroke={GREENS[Math.min(3, Math.floor(value * 4))]}
+            {paths.map((d, i) =>
+              d ? (
+                <path
+                  key={i}
+                  d={d}
+                  stroke={GREENS[i]}
                   strokeWidth={1.8}
                   strokeLinecap="round"
+                  fill="none"
                 />
-              );
-            })}
+              ) : null,
+            )}
             {values[peak] > 0.5 ? (
               <circle
                 cx={round(x0 + 1.5 + (peak * (bedWidth - 3)) / 11)}
@@ -81,4 +84,4 @@ export function YearBeds({ years, scaleMax, className }: YearBedsProps) {
       })}
     </svg>
   );
-}
+});
