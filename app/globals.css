@@ -398,3 +398,11 @@ a:focus-visible {
 .garden-back-link:hover {
   color: #f3f0e7;
 }
+
+@media (max-width: 930px) {
+  .garden-back-link {
+    top: 76px;
+    bottom: auto;
+    left: 14px;
+  }
+}
