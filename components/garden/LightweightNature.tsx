@@ -292,122 +292,6 @@ function createHeroCanopyGeometry(colors: THREE.Color[]) {
   return mergeAndDispose(geometries);
 }
 
-function VoxelHeroTree({ foliageColors }: { foliageColors: THREE.Color[] }) {
-  const woodRef = useRef<THREE.InstancedMesh>(null);
-  const leafRef = useRef<THREE.InstancedMesh>(null);
-  const wood = useMemo<
-    Array<{ position: VectorTuple; scale: VectorTuple }>
-  >(
-    () => [
-      { position: [0, 0.42, 0], scale: [0.72, 0.84, 0.72] },
-      { position: [0, 1.18, 0], scale: [0.72, 0.72, 0.72] },
-      { position: [0, 1.88, 0], scale: [0.68, 0.72, 0.68] },
-      { position: [0, 2.56, 0], scale: [0.64, 0.72, 0.64] },
-      { position: [0.42, 3.02, 0.04], scale: [1.12, 0.46, 0.48] },
-      { position: [-0.45, 3.22, -0.02], scale: [1.18, 0.44, 0.46] },
-      { position: [0.08, 3.18, -0.42], scale: [0.46, 0.44, 1.08] },
-    ],
-    [],
-  );
-  const leaves = useMemo<
-    Array<{ position: VectorTuple; scale: VectorTuple; shade: number }>
-  >(
-    () => [
-      { position: [0, 4.05, 0], scale: [2.1, 1.05, 1.8], shade: 1 },
-      {
-        position: [1.25, 3.75, 0.18],
-        scale: [1.45, 1, 1.35],
-        shade: 0,
-      },
-      {
-        position: [-1.2, 3.92, -0.12],
-        scale: [1.5, 1.08, 1.35],
-        shade: 2,
-      },
-      {
-        position: [0.08, 3.82, -1.05],
-        scale: [1.45, 0.95, 1.25],
-        shade: 0,
-      },
-      {
-        position: [0.18, 4.62, 0.18],
-        scale: [1.5, 0.82, 1.3],
-        shade: 2,
-      },
-      {
-        position: [1.62, 4.2, 0.12],
-        scale: [0.8, 0.76, 0.86],
-        shade: 1,
-      },
-      {
-        position: [-1.62, 4.25, -0.14],
-        scale: [0.78, 0.72, 0.82],
-        shade: 0,
-      },
-    ],
-    [],
-  );
-
-  useLayoutEffect(() => {
-    const dummy = new THREE.Object3D();
-
-    wood.forEach((piece, index) => {
-      dummy.position.set(...piece.position);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(...piece.scale);
-      dummy.updateMatrix();
-      woodRef.current?.setMatrixAt(index, dummy.matrix);
-      woodRef.current?.setColorAt(
-        index,
-        new THREE.Color(index % 3 === 0 ? "#654a35" : "#563c2c"),
-      );
-    });
-
-    leaves.forEach((piece, index) => {
-      dummy.position.set(...piece.position);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(...piece.scale);
-      dummy.updateMatrix();
-      leafRef.current?.setMatrixAt(index, dummy.matrix);
-      leafRef.current?.setColorAt(
-        index,
-        foliageColors[piece.shade % foliageColors.length],
-      );
-    });
-
-    for (const mesh of [woodRef.current, leafRef.current]) {
-      if (!mesh) continue;
-      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.computeBoundingSphere();
-    }
-  }, [foliageColors, leaves, wood]);
-
-  return (
-    <>
-      <instancedMesh
-        ref={woodRef}
-        args={[undefined, undefined, wood.length]}
-        castShadow
-        receiveShadow
-      >
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial roughness={0.98} />
-      </instancedMesh>
-      <instancedMesh
-        ref={leafRef}
-        args={[undefined, undefined, leaves.length]}
-        castShadow
-        receiveShadow
-      >
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial roughness={0.94} />
-      </instancedMesh>
-    </>
-  );
-}
-
 export function LightweightNature({
   seed,
   quality,
@@ -579,11 +463,9 @@ export function LightweightNature({
         (surfaceSampler(shrub.x, shrub.z) ?? 0) + surfaceOffset;
       dummy.position.set(shrub.x, groundY + shrub.scale * 0.52, shrub.z);
       dummy.rotation.set(
-        quality === "medium" ? 0 : shrub.rotation * 0.08,
-        quality === "medium"
-          ? Math.round(shrub.rotation / (Math.PI / 2)) * (Math.PI / 2)
-          : shrub.rotation,
-        quality === "medium" ? 0 : (shrub.shade - 1) * 0.06,
+        shrub.rotation * 0.08,
+        shrub.rotation,
+        (shrub.shade - 1) * 0.06,
       );
       dummy.scale.set(
         shrub.scale * 1.15,
@@ -600,11 +482,9 @@ export function LightweightNature({
         (surfaceSampler(rock.x, rock.z) ?? 0) + surfaceOffset;
       dummy.position.set(rock.x, groundY + rock.scale * 0.2, rock.z);
       dummy.rotation.set(
-        quality === "medium" ? 0 : rock.rotation * 0.13,
-        quality === "medium"
-          ? Math.round(rock.rotation / (Math.PI / 2)) * (Math.PI / 2)
-          : rock.rotation,
-        quality === "medium" ? 0 : (rock.shade - 1) * 0.16,
+        rock.rotation * 0.13,
+        rock.rotation,
+        (rock.shade - 1) * 0.16,
       );
       dummy.scale.set(
         rock.scale,
@@ -672,16 +552,8 @@ export function LightweightNature({
         castShadow={quality === "high"}
         receiveShadow={quality === "high"}
       >
-        {quality === "medium" ? (
-          <boxGeometry args={[1, 1, 1]} />
-        ) : (
-          <icosahedronGeometry args={[1, 1]} />
-        )}
-        {quality === "medium" ? (
-          <meshStandardMaterial roughness={0.96} />
-        ) : (
-          <meshBasicMaterial toneMapped={false} />
-        )}
+        <icosahedronGeometry args={[1, 1]} />
+        <meshBasicMaterial toneMapped={false} />
       </instancedMesh>
 
       <instancedMesh
@@ -690,11 +562,7 @@ export function LightweightNature({
         castShadow={quality === "high"}
         receiveShadow
       >
-        {quality === "medium" ? (
-          <boxGeometry args={[1, 1, 1]} />
-        ) : (
-          <dodecahedronGeometry args={[1, 0]} />
-        )}
+        <dodecahedronGeometry args={[1, 0]} />
         <meshStandardMaterial
           flatShading
           roughness={1}
@@ -721,26 +589,20 @@ export function LightweightNature({
           if (target instanceof HTMLElement) target.style.cursor = "grab";
         }}
       >
-        {quality === "medium" ? (
-          <VoxelHeroTree foliageColors={foliageColors} />
-        ) : (
-          <>
-            <mesh
-              geometry={heroTrunkGeometry}
-              castShadow={quality !== "low"}
-              receiveShadow
-            >
-              <meshBasicMaterial color="#57463a" toneMapped={false} />
-            </mesh>
-            <mesh
-              geometry={heroCanopyGeometry}
-              castShadow={quality !== "low"}
-              receiveShadow
-            >
-              <meshBasicMaterial toneMapped={false} vertexColors />
-            </mesh>
-          </>
-        )}
+        <mesh
+          geometry={heroTrunkGeometry}
+          castShadow={quality !== "low"}
+          receiveShadow
+        >
+          <meshBasicMaterial color="#57463a" toneMapped={false} />
+        </mesh>
+        <mesh
+          geometry={heroCanopyGeometry}
+          castShadow={quality !== "low"}
+          receiveShadow
+        >
+          <meshBasicMaterial toneMapped={false} vertexColors />
+        </mesh>
       </group>
     </group>
   );

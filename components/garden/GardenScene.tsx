@@ -27,14 +27,14 @@ import type {
 } from "./types";
 import { LightweightNature } from "./LightweightNature";
 import {
-  createPhotorealIslandGeometry,
   createPhotorealIslandSurfaceSampler,
   type PhotorealIslandSurfaceSampler,
 } from "./photoreal-geometry";
-import {
-  createVoxelSurfaceSampler,
-  VoxelTerrain,
-} from "./VoxelTerrain";
+import { Island, ISLAND_SURFACE_OFFSET } from "./world/Island";
+import { computeGardenLayout } from "./world/mapping";
+import { worldPalette } from "./world/palette";
+import { SkyAndLights } from "./world/Sky";
+import { TIER_SETTINGS } from "./world/tiers";
 
 type VectorTuple = [number, number, number];
 
@@ -81,8 +81,9 @@ interface ContributionPlantItem extends ScatterItem {
   level: number;
 }
 
+// Legacy fixed radius, used only by EdgeUnderstory's edge scaling until the
+// flora pass replaces it. The island itself now sizes from the layout.
 const WORLD_RADIUS = 11.5;
-const ISLAND_SURFACE_OFFSET = -0.7;
 const POND_X = -2.35;
 const POND_Z = 1.25;
 const CONTRIBUTION_BED_START = -Math.PI * 0.9;
@@ -220,12 +221,6 @@ const DAY_PALETTES: Record<
     lightIntensity: 0.78,
     ambientIntensity: 0.18,
   },
-};
-
-const QUALITY_MULTIPLIER: Record<GardenQuality, number> = {
-  low: 0.55,
-  medium: 0.46,
-  high: 1,
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -479,14 +474,6 @@ function createEdgeScatter(
   return items;
 }
 
-function createIslandGeometry(quality: GardenQuality, seed: number) {
-  return createPhotorealIslandGeometry({
-    radius: WORLD_RADIUS,
-    quality,
-    seed,
-  });
-}
-
 function createOrganicPondGeometry(
   seed: number,
   segments: number,
@@ -576,14 +563,6 @@ function createWaterNormalTexture(seed: number, resolution = 128) {
 }
 
 function createGrassBladeGeometry(quality: GardenQuality) {
-  if (quality === "medium") {
-    const block = new THREE.BoxGeometry(0.18, 1, 0.18);
-    block.translate(0, 0.5, 0);
-    block.computeBoundingBox();
-    block.computeBoundingSphere();
-    return block;
-  }
-
   const segments = quality === "low" ? 2 : 3;
   const positions: number[] = [];
   const uvs: number[] = [];
@@ -689,13 +668,6 @@ function deriveActivity(stats: GardenStats, days: GardenDay[]) {
   return clamp01(0.25 + Math.log10(stats.totalContributions + 1) / 4.2);
 }
 
-function getFogRange(weather: GardenWeather, timeOfDay: GardenTimeOfDay) {
-  if (weather === "fog") return { near: 7, far: 23 };
-  if (weather === "rain" || weather === "snow") return { near: 13, far: 35 };
-  if (timeOfDay === "night") return { near: 18, far: 41 };
-  return { near: 23, far: 50 };
-}
-
 function mergeClassNames(...values: Array<string | undefined>) {
   return values.filter(Boolean).join(" ");
 }
@@ -772,12 +744,8 @@ export function GardenScene({
     () => paletteFor(season, timeOfDay),
     [season, timeOfDay],
   );
-  const dpr: [number, number] =
-    quality === "high"
-      ? [1, 1.35]
-      : quality === "medium"
-        ? [1, 1.15]
-        : [1, 1];
+  const tier = TIER_SETTINGS[quality] ?? TIER_SETTINGS.high;
+  const skyColor = worldPalette(season, timeOfDay).sky;
 
   return (
     <div
@@ -796,7 +764,7 @@ export function GardenScene({
         minHeight: 320,
         position: "relative",
         overflow: "hidden",
-        background: palette.sky,
+        background: skyColor,
       }}
     >
       <Canvas
@@ -808,7 +776,7 @@ export function GardenScene({
           near: 0.1,
           far: 90,
         }}
-        dpr={dpr}
+        dpr={tier.dpr}
         frameloop="always"
         gl={{
           antialias: quality !== "low",
@@ -817,11 +785,11 @@ export function GardenScene({
         }}
         onCreated={({ gl }) => {
           gl.outputColorSpace = THREE.SRGBColorSpace;
-          gl.toneMapping = THREE.ACESFilmicToneMapping;
-          gl.toneMappingExposure = timeOfDay === "night" ? 1.04 : 1.08;
+          gl.toneMapping = THREE.NeutralToneMapping;
+          gl.toneMappingExposure = 1;
         }}
         onPointerMissed={() => onSelect?.(null)}
-        shadows={quality !== "low" ? "percentage" : false}
+        shadows={tier.shadows ? "percentage" : false}
         style={{ width: "100%", height: "100%", touchAction: "none" }}
       >
         <Suspense fallback={null}>
@@ -928,31 +896,52 @@ function GardenWorld({
   onFlythroughComplete,
   onWalkthroughExit,
 }: GardenWorldProps) {
-  const fog = getFogRange(weather, timeOfDay);
-  const density = QUALITY_MULTIPLIER[quality];
-  const sunPosition: VectorTuple =
-    timeOfDay === "sunset"
-      ? [-13, 7.5, -7]
-      : timeOfDay === "morning"
-        ? [-9, 11, 10]
-        : timeOfDay === "night"
-          ? [-11, 14, -13]
-          : [11, 16, 9];
-  const baseSurfaceSampler = useMemo(
+  const tier = TIER_SETTINGS[quality] ?? TIER_SETTINGS.high;
+  const density = tier.density;
+  const world = useMemo(
+    () => worldPalette(season, timeOfDay),
+    [season, timeOfDay],
+  );
+  const layout = useMemo(
+    () =>
+      computeGardenLayout({
+        days,
+        visibleThrough,
+        stats: {
+          pullRequests: stats.pullRequests,
+          issues: stats.issues,
+          repositories: stats.repositories,
+          streak: stats.streak,
+        },
+        activity: health,
+        season,
+        seed,
+        density,
+      }),
+    [
+      days,
+      density,
+      health,
+      season,
+      seed,
+      stats.issues,
+      stats.pullRequests,
+      stats.repositories,
+      stats.streak,
+      visibleThrough,
+    ],
+  );
+  const islandRadius = layout.islandRadius;
+  // Same radius and seed as the Island mesh, so everything placed with it
+  // stays grounded as the island grows with the years of history.
+  const surfaceSampler = useMemo(
     () =>
       createPhotorealIslandSurfaceSampler({
-        radius: WORLD_RADIUS,
+        radius: islandRadius,
         quality,
         seed,
       }),
-    [quality, seed],
-  );
-  const surfaceSampler = useMemo(
-    () =>
-      quality === "medium"
-        ? createVoxelSurfaceSampler(baseSurfaceSampler)
-        : baseSurfaceSampler,
-    [baseSurfaceSampler, quality],
+    [islandRadius, quality, seed],
   );
   const heroRootY =
     (surfaceSampler(2.62, 0.48) ?? 0) + ISLAND_SURFACE_OFFSET;
@@ -990,89 +979,43 @@ function GardenWorld({
 
   return (
     <>
-      <color attach="background" args={[palette.sky]} />
-      <fog attach="fog" args={[palette.fog, fog.near, fog.far]} />
-
-      <hemisphereLight
-        args={[
-          palette.ambient,
-          timeOfDay === "night" ? "#273348" : palette.earth,
-          palette.ambientIntensity * 1.9,
-        ]}
-      />
-      <ambientLight
-        color={timeOfDay === "night" ? "#708097" : "#fff2dc"}
-        intensity={timeOfDay === "night" ? 0.08 : 0.22}
-      />
-      <directionalLight
-        castShadow={quality !== "low"}
-        color={palette.sun}
-        intensity={palette.lightIntensity * 0.72}
-        position={sunPosition}
-        shadow-mapSize-height={quality === "high" ? 1024 : 768}
-        shadow-mapSize-width={quality === "high" ? 1024 : 768}
-        shadow-camera-bottom={-12.5}
-        shadow-camera-far={48}
-        shadow-camera-left={-12.5}
-        shadow-camera-right={12.5}
-        shadow-camera-top={12.5}
-        shadow-bias={-0.00018}
-        shadow-normalBias={0.018}
-        shadow-radius={quality === "high" ? 3 : 1}
-      />
-      <directionalLight
-        color={palette.horizon}
-        intensity={timeOfDay === "night" ? 0.08 : 0.42}
-        position={[-7, 8, 12]}
-      />
-
-      <AtmosphereDome
-        palette={palette}
-        quality={quality}
+      <SkyAndLights
+        palette={world}
+        reducedMotion={reducedMotion}
+        seed={seed}
+        tier={tier}
         timeOfDay={timeOfDay}
+        weather={weather}
       />
-      {timeOfDay === "night" ? (
-        <CelestialBody
-          blocky={quality === "medium"}
-          timeOfDay={timeOfDay}
-          palette={palette}
-        />
-      ) : null}
-      {quality === "low" ? (
-        <CloudLayer
-          density={density}
-          palette={palette}
-          quality={quality}
-          reducedMotion={reducedMotion}
-          seed={seed + 3}
-          timeOfDay={timeOfDay}
-          weather={weather}
-        />
-      ) : null}
-      <IslandTerrain
+      {timeOfDay === "night" ? <CelestialBody color={palette.sun} /> : null}
+      <Island
+        palette={world}
+        quality={quality}
+        radius={islandRadius}
+        seed={seed}
+        tier={tier}
+      />
+      <PondWater
         health={health}
         palette={palette}
         quality={quality}
         reducedMotion={reducedMotion}
         season={season}
-        seed={seed}
+        seed={seed + 83}
         stats={stats}
         surfaceSampler={surfaceSampler}
         timeOfDay={timeOfDay}
         weather={weather}
         onSelect={onSelect}
       />
-      {quality !== "medium" ? (
-        <StonePath
-          palette={palette}
-          quality={quality}
-          seed={seed + 7}
-          surfaceSampler={surfaceSampler}
-        />
-      ) : null}
+      <StonePath
+        palette={palette}
+        quality={quality}
+        seed={seed + 7}
+        surfaceSampler={surfaceSampler}
+      />
       {quality === "low" ? (
         <>
-          <RimRocks palette={palette} quality={quality} seed={seed + 13} />
           <GroundDetails
             health={health}
             palette={palette}
@@ -1178,6 +1121,7 @@ function GardenWorld({
       {walkthrough ? (
         <GardenWalkthroughControls
           input={walkInput}
+          islandRadius={islandRadius}
           onExit={onWalkthroughExit}
           surfaceSampler={surfaceSampler}
         />
@@ -1222,241 +1166,18 @@ function useCursorHandlers() {
   );
 }
 
-function AtmosphereDome({
-  palette,
-  quality,
-  timeOfDay,
-}: {
-  palette: GardenPalette;
-  quality: GardenQuality;
-  timeOfDay: GardenTimeOfDay;
-}) {
-  const geometry = useMemo(() => {
-    const widthSegments = quality === "high" ? 48 : quality === "medium" ? 36 : 24;
-    const sphere = new THREE.SphereGeometry(54, widthSegments, Math.round(widthSegments / 2));
-    const positions = sphere.getAttribute("position") as THREE.BufferAttribute;
-    const colors = new Float32Array(positions.count * 3);
-    const sky = new THREE.Color(palette.sky);
-    const horizon = new THREE.Color(palette.horizon);
-    const fog = new THREE.Color(palette.fog);
-    const zenith = sky.clone().multiplyScalar(timeOfDay === "night" ? 0.68 : 0.92);
-
-    for (let index = 0; index < positions.count; index += 1) {
-      const normalizedY = positions.getY(index) / 54;
-      const horizonMix = clamp01((normalizedY + 0.12) / 0.82);
-      const color = horizon.clone().lerp(zenith, horizonMix * horizonMix);
-      if (normalizedY < -0.08) {
-        color.lerp(fog, clamp01((-normalizedY - 0.08) * 2.8));
-      }
-      colors[index * 3] = color.r;
-      colors[index * 3 + 1] = color.g;
-      colors[index * 3 + 2] = color.b;
-    }
-
-    sphere.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    return sphere;
-  }, [palette.fog, palette.horizon, palette.sky, quality, timeOfDay]);
-
-  useEffect(() => () => geometry.dispose(), [geometry]);
-
+function CelestialBody({ color }: { color: string }) {
+  const radius = 1.05;
   return (
-    <mesh geometry={geometry} frustumCulled={false} renderOrder={-100}>
-      <meshBasicMaterial
-        depthTest={false}
-        depthWrite={false}
-        fog={false}
-        side={THREE.BackSide}
-        toneMapped={false}
-        vertexColors
-      />
-    </mesh>
-  );
-}
-
-function CloudLayer({
-  density,
-  palette,
-  quality,
-  reducedMotion,
-  seed,
-  timeOfDay,
-  weather,
-}: {
-  density: number;
-  palette: GardenPalette;
-  quality: GardenQuality;
-  reducedMotion: boolean;
-  seed: number;
-  timeOfDay: GardenTimeOfDay;
-  weather: GardenWeather;
-}) {
-  const group = useRef<THREE.Group>(null);
-  const cloudCount = Math.max(
-    2,
-    Math.round((quality === "high" ? 7 : quality === "medium" ? 5 : 3) * density),
-  );
-  const clouds = useMemo(() => {
-    const random = seededRandom(seed);
-    return Array.from({ length: cloudCount }, (_, index) => {
-      const angle = (index / cloudCount) * Math.PI * 2 + random() * 0.55;
-      const radius = 16 + random() * 12;
-      return {
-        x: Math.cos(angle) * radius,
-        y: 7.2 + random() * 5.2,
-        z: Math.sin(angle) * radius,
-        rotation: random() * Math.PI * 2,
-        scale: 1.2 + random() * 1.9,
-      };
-    });
-  }, [cloudCount, seed]);
-  const cloudColor = useMemo(() => {
-    const base = new THREE.Color(palette.fog);
-    if (weather === "rain") base.lerp(new THREE.Color("#526b74"), 0.48);
-    if (timeOfDay === "night") base.multiplyScalar(0.48);
-    return `#${base.getHexString()}`;
-  }, [palette.fog, timeOfDay, weather]);
-  const opacity = weather === "rain" ? 0.48 : weather === "fog" ? 0.36 : 0.22;
-
-  useFrame((state) => {
-    if (!group.current || reducedMotion) return;
-    group.current.rotation.y = state.clock.elapsedTime * (weather === "wind" ? 0.018 : 0.006);
-    group.current.position.y = Math.sin(state.clock.elapsedTime * 0.12) * 0.08;
-  });
-
-  return (
-    <group ref={group}>
-      {clouds.map((cloud, index) => (
-        <group
-          key={index}
-          position={[cloud.x, cloud.y, cloud.z]}
-          rotation={[0, cloud.rotation, 0]}
-          scale={cloud.scale}
-        >
-          <mesh scale={[1.9, 0.52, 0.78]}>
-            <sphereGeometry args={[1, 12, 8]} />
-            <meshStandardMaterial
-              color={cloudColor}
-              depthWrite={false}
-              opacity={opacity}
-              roughness={1}
-              transparent
-            />
-          </mesh>
-          <mesh position={[1.15, 0.08, 0.08]} scale={[1.28, 0.42, 0.62]}>
-            <sphereGeometry args={[1, 12, 8]} />
-            <meshStandardMaterial
-              color={cloudColor}
-              depthWrite={false}
-              opacity={opacity * 0.86}
-              roughness={1}
-              transparent
-            />
-          </mesh>
-          <mesh position={[-1.2, -0.05, -0.03]} scale={[1.18, 0.36, 0.58]}>
-            <sphereGeometry args={[1, 12, 8]} />
-            <meshStandardMaterial
-              color={cloudColor}
-              depthWrite={false}
-              opacity={opacity * 0.8}
-              roughness={1}
-              transparent
-            />
-          </mesh>
-        </group>
-      ))}
-      {weather === "fog" ? (
-        <FogWisps color={palette.fog} quality={quality} reducedMotion={reducedMotion} seed={seed + 37} />
-      ) : null}
-    </group>
-  );
-}
-
-function FogWisps({
-  color,
-  quality,
-  reducedMotion,
-  seed,
-}: {
-  color: string;
-  quality: GardenQuality;
-  reducedMotion: boolean;
-  seed: number;
-}) {
-  const group = useRef<THREE.Group>(null);
-  const wisps = useMemo(() => {
-    const random = seededRandom(seed);
-    const count = quality === "high" ? 8 : quality === "medium" ? 6 : 4;
-    return Array.from({ length: count }, (_, index) => {
-      const angle = (index / count) * Math.PI * 2 + random() * 0.65;
-      const radius = 6.5 + random() * 6.5;
-      return {
-        x: Math.cos(angle) * radius,
-        y: 0.75 + random() * 1.4,
-        z: Math.sin(angle) * radius,
-        rotation: random() * Math.PI,
-        scale: 1.5 + random() * 2.4,
-      };
-    });
-  }, [quality, seed]);
-
-  useFrame((state) => {
-    if (!group.current || reducedMotion) return;
-    group.current.rotation.y = state.clock.elapsedTime * 0.008;
-    group.current.position.x = Math.sin(state.clock.elapsedTime * 0.1) * 0.22;
-  });
-
-  return (
-    <group ref={group}>
-      {wisps.map((wisp, index) => (
-        <mesh
-          key={index}
-          position={[wisp.x, wisp.y, wisp.z]}
-          rotation={[0, wisp.rotation, 0]}
-          scale={[wisp.scale * 1.9, wisp.scale * 0.2, wisp.scale]}
-          renderOrder={2}
-        >
-          <sphereGeometry args={[1, 12, 7]} />
-          <meshBasicMaterial
-            color={color}
-            depthWrite={false}
-            opacity={0.075}
-            transparent
-          />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
-function CelestialBody({
-  blocky = false,
-  timeOfDay,
-  palette,
-}: {
-  blocky?: boolean;
-  timeOfDay: GardenTimeOfDay;
-  palette: GardenPalette;
-}) {
-  const isNight = timeOfDay === "night";
-  const radius = isNight ? 1.05 : 1.35;
-  return (
-    <group position={isNight ? [-10, 13, -15] : [12, 15, -17]}>
+    <group position={[-10, 13, -15]}>
       <mesh>
-        {blocky ? (
-          <boxGeometry args={[radius * 1.65, radius * 1.65, radius * 0.34]} />
-        ) : (
-          <sphereGeometry args={[radius, 20, 20]} />
-        )}
-        <meshBasicMaterial color={palette.sun} fog={false} toneMapped={false} />
+        <sphereGeometry args={[radius, 20, 20]} />
+        <meshBasicMaterial color={color} fog={false} toneMapped={false} />
       </mesh>
       <mesh scale={1.55}>
-        {blocky ? (
-          <boxGeometry args={[radius * 1.65, radius * 1.65, radius * 0.34]} />
-        ) : (
-          <sphereGeometry args={[radius, 16, 16]} />
-        )}
+        <sphereGeometry args={[radius, 16, 16]} />
         <meshBasicMaterial
-          color={palette.sun}
+          color={color}
           fog={false}
           opacity={0.1}
           transparent
@@ -1464,184 +1185,6 @@ function CelestialBody({
         />
       </mesh>
     </group>
-  );
-}
-
-function IslandTerrain({
-  health,
-  palette,
-  quality,
-  reducedMotion,
-  season,
-  seed,
-  stats,
-  surfaceSampler,
-  timeOfDay,
-  weather,
-  onSelect,
-}: {
-  health: number;
-  palette: GardenPalette;
-  quality: GardenQuality;
-  reducedMotion: boolean;
-  season: GardenSeason;
-  seed: number;
-  stats: GardenStats;
-  surfaceSampler: PhotorealIslandSurfaceSampler;
-  timeOfDay: GardenTimeOfDay;
-  weather: GardenWeather;
-  onSelect?: (selection: GardenSelection | null) => void;
-}) {
-  const healthyGround = useMemo(() => {
-    const color = new THREE.Color(palette.groundDry);
-    color.lerp(new THREE.Color(palette.ground), 0.54 + health * 0.34);
-    return `#${color.getHexString()}`;
-  }, [health, palette.ground, palette.groundDry]);
-  const soilColor = useMemo(() => {
-    const color = new THREE.Color(palette.earth);
-    color.lerp(new THREE.Color(palette.groundDry), 0.2);
-    return `#${color.getHexString()}`;
-  }, [palette.earth, palette.groundDry]);
-  const terrainGeometry = useMemo(
-    () => (quality === "medium" ? undefined : createIslandGeometry(quality, seed)),
-    [quality, seed],
-  );
-
-  useEffect(
-    () => () => {
-      terrainGeometry?.dispose();
-    },
-    [terrainGeometry],
-  );
-
-  if (quality === "medium") {
-    return (
-      <VoxelTerrain
-        health={health}
-        palette={palette}
-        season={season}
-        seed={seed}
-        stats={stats}
-        surfaceOffset={ISLAND_SURFACE_OFFSET}
-        surfaceSampler={surfaceSampler}
-        timeOfDay={timeOfDay}
-        onSelect={onSelect}
-      />
-    );
-  }
-
-  return (
-    <group>
-      <mesh
-        castShadow
-        receiveShadow
-        geometry={terrainGeometry}
-        position={[0, -0.7, 0]}
-      >
-        <meshStandardMaterial
-          attach="material-0"
-          color={palette.cliff}
-          flatShading
-          roughness={0.98}
-          vertexColors
-        />
-        <meshStandardMaterial
-          attach="material-1"
-          color={healthyGround}
-          roughness={0.97}
-          vertexColors
-        />
-        <meshStandardMaterial
-          attach="material-2"
-          color={soilColor}
-          flatShading
-          roughness={1}
-          vertexColors
-        />
-      </mesh>
-
-      {quality === "low" ? (
-        <CliffStrata palette={palette} quality={quality} seed={seed + 19} />
-      ) : null}
-
-      <PondWater
-        health={health}
-        palette={palette}
-        quality={quality}
-        reducedMotion={reducedMotion}
-        seed={seed + 83}
-        season={season}
-        stats={stats}
-        surfaceSampler={surfaceSampler}
-        timeOfDay={timeOfDay}
-        weather={weather}
-        onSelect={onSelect}
-      />
-    </group>
-  );
-}
-
-function CliffStrata({
-  palette,
-  quality,
-  seed,
-}: {
-  palette: GardenPalette;
-  quality: GardenQuality;
-  seed: number;
-}) {
-  const mesh = useRef<THREE.InstancedMesh>(null);
-  const count = quality === "high" ? 52 : quality === "medium" ? 38 : 24;
-  const strata = useMemo(() => {
-    const random = seededRandom(seed);
-    return Array.from({ length: count }, (_, index) => {
-      const level = index % 3;
-      const angle = (index / count) * Math.PI * 2 + random() * 0.1;
-      const y = -0.3 - level * 0.31 + (random() - 0.5) * 0.07;
-      const verticalMix = clamp01((-y - 0.16) / 1.05);
-      const radius = THREE.MathUtils.lerp(7.65, 6.86, verticalMix);
-      return {
-        angle,
-        radius,
-        y,
-        length: 0.48 + random() * 0.56,
-        thickness: 0.025 + random() * 0.05,
-      };
-    });
-  }, [count, seed]);
-  const strataColor = useMemo(() => {
-    const color = new THREE.Color(palette.cliff);
-    color.lerp(new THREE.Color(palette.stoneLight), 0.18);
-    return `#${color.getHexString()}`;
-  }, [palette.cliff, palette.stoneLight]);
-
-  useLayoutEffect(() => {
-    if (!mesh.current) return;
-    const dummy = new THREE.Object3D();
-    strata.forEach((stratum, index) => {
-      dummy.position.set(
-        Math.cos(stratum.angle) * stratum.radius,
-        stratum.y,
-        Math.sin(stratum.angle) * stratum.radius,
-      );
-      dummy.rotation.set(0, -stratum.angle, (index % 2 ? 1 : -1) * 0.03);
-      dummy.scale.set(stratum.length, stratum.thickness, 0.075);
-      dummy.updateMatrix();
-      mesh.current?.setMatrixAt(index, dummy.matrix);
-    });
-    mesh.current.instanceMatrix.needsUpdate = true;
-  }, [strata]);
-
-  return (
-    <instancedMesh
-      ref={mesh}
-      args={[undefined, undefined, strata.length]}
-      castShadow={quality === "high"}
-      receiveShadow
-    >
-      <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color={strataColor} roughness={1} />
-    </instancedMesh>
   );
 }
 
@@ -2215,52 +1758,6 @@ function EdgeUnderstory({
   );
 }
 
-function RimRocks({
-  palette,
-  quality,
-  seed,
-}: {
-  palette: GardenPalette;
-  quality: GardenQuality;
-  seed: number;
-}) {
-  const mesh = useRef<THREE.InstancedMesh>(null);
-  const count = quality === "high" ? 34 : quality === "medium" ? 27 : 20;
-  const rocks = useMemo(() => {
-    const random = seededRandom(seed);
-    return Array.from({ length: count }, (_, index) => {
-      const angle = (index / count) * Math.PI * 2 + random() * 0.12;
-      const radius = 7.48 + random() * 0.26;
-      return {
-        x: Math.cos(angle) * radius,
-        z: Math.sin(angle) * radius,
-        rotation: random() * Math.PI,
-        scale: 0.45 + random() * 0.55,
-      };
-    });
-  }, [count, seed]);
-
-  useLayoutEffect(() => {
-    if (!mesh.current) return;
-    const dummy = new THREE.Object3D();
-    rocks.forEach((rock, index) => {
-      dummy.position.set(rock.x, -0.08 + rock.scale * 0.18, rock.z);
-      dummy.rotation.set(rock.rotation * 0.25, rock.rotation, rock.rotation * 0.14);
-      dummy.scale.set(rock.scale, rock.scale * 0.72, rock.scale * 0.84);
-      dummy.updateMatrix();
-      mesh.current?.setMatrixAt(index, dummy.matrix);
-    });
-    mesh.current.instanceMatrix.needsUpdate = true;
-  }, [rocks]);
-
-  return (
-    <instancedMesh ref={mesh} args={[undefined, undefined, rocks.length]} castShadow receiveShadow>
-      <icosahedronGeometry args={[0.5, 1]} />
-      <meshStandardMaterial color={palette.stone} roughness={0.96} />
-    </instancedMesh>
-  );
-}
-
 function ContributionBedRibbons({
   days,
   health,
@@ -2480,7 +1977,7 @@ function GrassMeadow({
   }, [colors, grass, health, surfaceSampler, weeklyPatches]);
 
   useFrame((state) => {
-    if (!group.current || reducedMotion || quality === "medium") return;
+    if (!group.current || reducedMotion) return;
     const wind = weather === "wind" ? 1 : weather === "rain" ? 0.62 : 0.32;
     group.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.15) * 0.004 * wind;
     group.current.rotation.x = Math.cos(state.clock.elapsedTime * 0.82) * 0.002 * wind;
@@ -4490,10 +3987,12 @@ function StarField({ count, seed }: { count: number; seed: number }) {
 
 function GardenWalkthroughControls({
   input,
+  islandRadius,
   onExit,
   surfaceSampler,
 }: {
   input: GardenWalkInput;
+  islandRadius: number;
   onExit?: () => void;
   surfaceSampler: PhotorealIslandSurfaceSampler;
 }) {
@@ -4773,7 +4272,7 @@ function GardenWalkthroughControls({
         const sampledHeight = surfaceSampler(x, z);
         return (
           sampledHeight !== null &&
-          Math.hypot(x, z) <= WORLD_RADIUS - 0.72 &&
+          Math.hypot(x, z) <= islandRadius - 0.72 &&
           isOutsidePond(x, z, 1.28) &&
           Math.hypot(x - 2.62, z - 0.48) > 1.24 &&
           Math.abs(sampledHeight + ISLAND_SURFACE_OFFSET - currentGround) < 0.46

@@ -10,8 +10,9 @@ export const PHOTOREAL_ISLAND_MATERIAL_INDEX = {
 
 export interface PhotorealIslandGeometryOptions {
   /**
-   * The island's maximum horizontal radius. Values are constrained to an
-   * 11–13 metre range so the finished island remains 22–26 metres wide.
+   * The island's maximum horizontal radius. Values are constrained to a
+   * 9–13 metre range so the finished island stays 18–26 metres wide. The
+   * garden layout grows it with the years of contribution history.
    */
   radius: number;
   quality: GardenQuality;
@@ -197,7 +198,7 @@ function sampleCliffProfile(depth: number) {
 }
 
 function createIslandProfile(radius: number, seed: number): IslandProfile {
-  const maximumRadius = clamp(Number.isFinite(radius) ? radius : 12, 11, 13);
+  const maximumRadius = clamp(Number.isFinite(radius) ? radius : 12, 9, 13);
   const stableSeed = normalizeSeed(seed);
   const random = createSeededRandom(stableSeed);
   const cliffDepth = maximumRadius * (0.48 + random() * 0.035);
@@ -620,5 +621,110 @@ export function createPhotorealIslandGeometry({
     seed: stableSeed,
   });
 
+  return geometry;
+}
+
+export interface PhotorealIslandPaint {
+  /** Grass top: base colour and the highlight it blends toward. */
+  grass: readonly [THREE.ColorRepresentation, THREE.ColorRepresentation];
+  soil: THREE.ColorRepresentation;
+  earth: THREE.ColorRepresentation;
+  cliff: THREE.ColorRepresentation;
+  cliffLight: THREE.ColorRepresentation;
+  /** When set (winter), the top is snow with a light grey-blue variation. */
+  snow?: THREE.ColorRepresentation | null;
+}
+
+const SNOW_SHADOW = "#cfdce8";
+
+/**
+ * Replaces the island's vertex colours with a palette-driven paint job:
+ * noise-varied greens on the top, an earthy soil band, and a warm rock cliff
+ * with horizontal strata that darkens toward the underside tip. Colours are
+ * written in linear space, ready for a lit `vertexColors` material.
+ */
+export function paintPhotorealIsland(
+  geometry: THREE.BufferGeometry,
+  paint: PhotorealIslandPaint,
+  seed: number,
+) {
+  const position = geometry.getAttribute("position") as THREE.BufferAttribute;
+  const index = geometry.getIndex();
+  const count = position.count;
+  const stableSeed = normalizeSeed(seed);
+
+  // Each vertex belongs to exactly one material group (the generator never
+  // shares vertices between ground, soil and cliff), so map vertex → group.
+  const vertexGroup = new Int8Array(count).fill(-1);
+  for (const group of geometry.groups) {
+    const materialIndex = group.materialIndex ?? 0;
+    const end = group.start + group.count;
+    for (let cursor = group.start; cursor < end; cursor += 1) {
+      const vertex = index ? index.getX(cursor) : cursor;
+      vertexGroup[vertex] = materialIndex;
+    }
+  }
+
+  let topY = -Infinity;
+  let bottomY = Infinity;
+  for (let vertex = 0; vertex < count; vertex += 1) {
+    if (vertexGroup[vertex] !== PHOTOREAL_ISLAND_MATERIAL_INDEX.cliff) continue;
+    const y = position.getY(vertex);
+    if (y > topY) topY = y;
+    if (y < bottomY) bottomY = y;
+  }
+  const cliffSpan = Math.max(1e-3, topY - bottomY);
+
+  const winter = paint.snow != null;
+  const grassBase = new THREE.Color(winter ? paint.snow! : paint.grass[0]);
+  const grassHighlight = new THREE.Color(winter ? SNOW_SHADOW : paint.grass[1]);
+  const soil = new THREE.Color(paint.soil);
+  const earth = new THREE.Color(paint.earth);
+  const cliff = new THREE.Color(paint.cliff);
+  const cliffLight = new THREE.Color(paint.cliffLight);
+  const color = new THREE.Color();
+  const colors = new Float32Array(count * 3);
+
+  for (let vertex = 0; vertex < count; vertex += 1) {
+    const x = position.getX(vertex);
+    const y = position.getY(vertex);
+    const z = position.getZ(vertex);
+    const jitter = (hashGrid(vertex, 17, stableSeed + 907) - 0.5) * 0.12;
+    const group = vertexGroup[vertex];
+
+    if (group === PHOTOREAL_ISLAND_MATERIAL_INDEX.ground) {
+      // Soft meadow variation: medium patches (~0.35) over broad drifts.
+      const patches = valueNoise2D(x * 0.35, z * 0.35, stableSeed + 601);
+      const drifts = valueNoise2D(x * 0.12, z * 0.12, stableSeed + 613);
+      const amount = smoothstep(-0.75, 0.75, patches * 0.7 + drifts * 0.3);
+      color
+        .copy(grassBase)
+        .lerp(grassHighlight, winter ? amount * 0.55 : amount)
+        .multiplyScalar(1 + jitter);
+    } else if (group === PHOTOREAL_ISLAND_MATERIAL_INDEX.soil) {
+      const amount = 0.5 + valueNoise2D(x * 0.6, z * 0.6, stableSeed + 701) * 0.5;
+      color
+        .copy(soil)
+        .lerp(earth, amount)
+        .multiplyScalar(1 + jitter * 0.8);
+    } else {
+      const depth = clamp((topY - y) / cliffSpan, 0, 1);
+      const wobble = fbm2D(x * 0.45, z * 0.45, stableSeed + 811, 2) * 0.55;
+      // Alternating horizontal bands, softened so neighbouring rings blend.
+      const band = 0.5 + 0.5 * Math.sin((y + wobble) * 4.6);
+      const strata = 0.12 + smoothstep(0.35, 0.8, band) * 0.5;
+      const sunlitLip = Math.pow(1 - depth, 3) * 0.25;
+      color
+        .copy(cliff)
+        .lerp(cliffLight, clamp(strata + sunlitLip, 0, 0.8))
+        .multiplyScalar((1 - Math.pow(depth, 1.4) * 0.2) * (1 + jitter * 0.7));
+    }
+
+    colors[vertex * 3] = color.r;
+    colors[vertex * 3 + 1] = color.g;
+    colors[vertex * 3 + 2] = color.b;
+  }
+
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   return geometry;
 }
