@@ -26,8 +26,10 @@ import {
   createPhotorealIslandSurfaceSampler,
   type PhotorealIslandSurfaceSampler,
 } from "./photoreal-geometry";
-import { Flora } from "./world/Flora";
+import { Flora, useFloraLayout } from "./world/Flora";
+import { flowerClusters } from "./world/flora-layout";
 import { Island, ISLAND_SURFACE_OFFSET } from "./world/Island";
+import { Life } from "./world/Life";
 import {
   computeGardenLayout,
   type GardenLayout,
@@ -40,8 +42,6 @@ import { SkyAndLights } from "./world/Sky";
 import { TIER_SETTINGS } from "./world/tiers";
 import { Trees } from "./world/Trees";
 import { outflowRimPoint, Water } from "./world/Water";
-
-type VectorTuple = [number, number, number];
 
 interface GardenPalette {
   sky: string;
@@ -509,6 +509,14 @@ function GardenWorld({
       }),
     [islandRadius, quality, seed],
   );
+  const flora = useFloraLayout({
+    layout,
+    days,
+    channel,
+    surfaceSampler,
+    seed: seed + 233,
+  });
+  const clusters = useMemo(() => flowerClusters(flora.flowers), [flora.flowers]);
 
   return (
     <>
@@ -571,32 +579,26 @@ function GardenWorld({
         onSelect={onSelect}
       />
       <Flora
-        channel={channel}
-        days={days}
-        layout={layout}
+        flora={flora}
         palette={world}
         quality={quality}
         reducedMotion={reducedMotion}
         season={season}
-        seed={seed + 233}
         stats={stats}
         surfaceSampler={surfaceSampler}
         tier={tier}
         weather={weather}
         onSelect={onSelect}
       />
-      {quality === "low" ? (
-        <Wildlife
-          density={density}
-          health={health}
-          palette={palette}
-          reducedMotion={reducedMotion}
-          season={season}
-          seed={seed + 701}
-          stats={stats}
-          timeOfDay={timeOfDay}
-        />
-      ) : null}
+      <Life
+        flowerClusters={clusters}
+        layout={layout}
+        palette={world}
+        reducedMotion={reducedMotion}
+        seed={seed + 701}
+        surfaceSampler={surfaceSampler}
+        timeOfDay={timeOfDay}
+      />
       <WeatherSystem
         density={density}
         palette={palette}
@@ -657,297 +659,6 @@ function CelestialBody({ color }: { color: string }) {
         />
       </mesh>
     </group>
-  );
-}
-
-function Wildlife({
-  density,
-  health,
-  palette,
-  reducedMotion,
-  season,
-  seed,
-  stats,
-  timeOfDay,
-}: {
-  density: number;
-  health: number;
-  palette: GardenPalette;
-  reducedMotion: boolean;
-  season: GardenSeason;
-  seed: number;
-  stats: GardenStats;
-  timeOfDay: GardenTimeOfDay;
-}) {
-  const butterflySeason = season === "spring" || season === "summer";
-  const butterflies = butterflySeason && health > 0.2
-    ? Math.max(
-        1,
-        Math.round(
-          (2 + (stats.streak >= 7 ? 1 : 0) + (stats.streak >= 30 ? 1 : 0)) * density,
-        ),
-      )
-    : 0;
-  const birds = health > 0.28 ? Math.max(2, Math.round(4 * density)) : 0;
-
-  return (
-    <group>
-      {Array.from({ length: butterflies }, (_, index) => (
-        <Butterfly
-          key={index}
-          color={palette.flowers[index % palette.flowers.length]}
-          index={index}
-          reducedMotion={reducedMotion}
-          seed={seed}
-        />
-      ))}
-      {birds > 0 ? (
-        <BirdFlock
-          count={birds}
-          color={timeOfDay === "night" ? "#9fb3c9" : "#334a4b"}
-          reducedMotion={reducedMotion}
-          seed={seed + 91}
-        />
-      ) : null}
-      {timeOfDay === "night" || timeOfDay === "sunset" ? (
-        <Fireflies
-          color={season === "winter" ? "#bcecff" : "#eaff8f"}
-          count={Math.round((timeOfDay === "night" ? 56 : 24) * density)}
-          reducedMotion={reducedMotion}
-          seed={seed + 181}
-        />
-      ) : null}
-    </group>
-  );
-}
-
-function Butterfly({
-  color,
-  index,
-  reducedMotion,
-  seed,
-}: {
-  color: string;
-  index: number;
-  reducedMotion: boolean;
-  seed: number;
-}) {
-  const group = useRef<THREE.Group>(null);
-  const leftWing = useRef<THREE.Mesh>(null);
-  const rightWing = useRef<THREE.Mesh>(null);
-  const settings = useMemo(() => {
-    const random = seededRandom(seed + index * 71);
-    return {
-      radius: 2.25 + random() * 3.1,
-      speed: 0.14 + random() * 0.1,
-      offset: random() * Math.PI * 2,
-      height: 1 + random() * 1.25,
-      direction: random() > 0.5 ? 1 : -1,
-    };
-  }, [index, seed]);
-
-  useFrame((state) => {
-    if (!group.current) return;
-    if (reducedMotion) {
-      // Deterministic rest pose: parked on its flight path with folded wings
-      // instead of an arbitrary frozen mid-flight orientation.
-      const angle = settings.offset;
-      group.current.position.set(
-        Math.cos(angle) * settings.radius,
-        settings.height,
-        Math.sin(angle * 1.18) * settings.radius * 0.72,
-      );
-      group.current.rotation.y =
-        -angle + (settings.direction > 0 ? 0 : Math.PI);
-      if (leftWing.current && rightWing.current) {
-        leftWing.current.rotation.y = 0.24;
-        rightWing.current.rotation.y = -0.24;
-      }
-      return;
-    }
-    const time = state.clock.elapsedTime;
-    const angle = time * settings.speed * settings.direction + settings.offset;
-    group.current.position.set(
-      Math.cos(angle) * settings.radius,
-      settings.height + Math.sin(time * 1.8 + index) * 0.25,
-      Math.sin(angle * 1.18) * settings.radius * 0.72,
-    );
-    group.current.rotation.y = -angle + (settings.direction > 0 ? 0 : Math.PI);
-    if (leftWing.current && rightWing.current) {
-      const flap = 0.24 + Math.abs(Math.sin(time * 8.5 + index)) * 0.86;
-      leftWing.current.rotation.y = flap;
-      rightWing.current.rotation.y = -flap;
-    }
-  });
-
-  return (
-    <group ref={group}>
-      <mesh scale={[0.035, 0.05, 0.15]} rotation={[Math.PI / 2, 0, 0]}>
-        <capsuleGeometry args={[1, 1, 3, 5]} />
-        <meshStandardMaterial color="#3d302b" roughness={0.8} />
-      </mesh>
-      <mesh ref={leftWing} position={[-0.02, 0, 0]} rotation={[Math.PI / 2, 0.55, 0]} scale={[1.15, 1, 0.74]}>
-        <circleGeometry args={[0.17, 3]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={0.08}
-          side={THREE.DoubleSide}
-          transparent
-          opacity={0.9}
-        />
-      </mesh>
-      <mesh ref={rightWing} position={[0.02, 0, 0]} rotation={[Math.PI / 2, -0.55, 0]} scale={[1.15, 1, 0.74]}>
-        <circleGeometry args={[0.17, 3]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={color}
-          emissiveIntensity={0.08}
-          side={THREE.DoubleSide}
-          transparent
-          opacity={0.9}
-        />
-      </mesh>
-    </group>
-  );
-}
-
-function BirdFlock({
-  color,
-  count,
-  reducedMotion,
-  seed,
-}: {
-  color: string;
-  count: number;
-  reducedMotion: boolean;
-  seed: number;
-}) {
-  const flock = useRef<THREE.Group>(null);
-  const settings = useMemo(() => {
-    const random = seededRandom(seed);
-    return { offset: random() * Math.PI * 2, radius: 8 + random() * 1.7 };
-  }, [seed]);
-
-  useFrame((state) => {
-    if (!flock.current || reducedMotion) return;
-    const angle = state.clock.elapsedTime * 0.075 + settings.offset;
-    flock.current.position.set(
-      Math.cos(angle) * settings.radius,
-      5.5 + Math.sin(angle * 2) * 0.45,
-      Math.sin(angle) * settings.radius,
-    );
-    flock.current.rotation.y = -angle;
-  });
-
-  return (
-    <group ref={flock} position={[7, 5.5, 2]}>
-      {Array.from({ length: count }, (_, index) => (
-        <Bird
-          key={index}
-          color={color}
-          index={index}
-          position={[-index * 0.62, (index % 2) * 0.18, Math.abs(index - 1) * 0.4]}
-          reducedMotion={reducedMotion}
-        />
-      ))}
-    </group>
-  );
-}
-
-function Bird({
-  color,
-  index,
-  position,
-  reducedMotion,
-}: {
-  color: string;
-  index: number;
-  position: VectorTuple;
-  reducedMotion: boolean;
-}) {
-  const leftWing = useRef<THREE.Mesh>(null);
-  const rightWing = useRef<THREE.Mesh>(null);
-
-  useFrame((state) => {
-    if (reducedMotion || !leftWing.current || !rightWing.current) return;
-    const wing = Math.sin(state.clock.elapsedTime * 4.2 + index * 0.8) * 0.45;
-    leftWing.current.rotation.z = -0.2 + wing;
-    rightWing.current.rotation.z = 0.2 - wing;
-  });
-
-  return (
-    <group position={position} scale={0.72}>
-      <mesh rotation={[Math.PI / 2, 0, 0]} scale={[0.07, 0.08, 0.28]}>
-        <coneGeometry args={[1, 1, 5]} />
-        <meshBasicMaterial color={color} fog />
-      </mesh>
-      <mesh ref={leftWing} position={[-0.14, 0, 0]} rotation={[-Math.PI / 2, 0, -0.2]} scale={[0.28, 0.14, 0.04]}>
-        <coneGeometry args={[1, 1, 3]} />
-        <meshBasicMaterial color={color} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh ref={rightWing} position={[0.14, 0, 0]} rotation={[-Math.PI / 2, 0, 0.2]} scale={[0.28, 0.14, 0.04]}>
-        <coneGeometry args={[1, 1, 3]} />
-        <meshBasicMaterial color={color} side={THREE.DoubleSide} />
-      </mesh>
-    </group>
-  );
-}
-
-function Fireflies({
-  color,
-  count,
-  reducedMotion,
-  seed,
-}: {
-  color: string;
-  count: number;
-  reducedMotion: boolean;
-  seed: number;
-}) {
-  const points = useRef<THREE.Points>(null);
-  const positions = useMemo(() => {
-    const random = seededRandom(seed);
-    const values = new Float32Array(count * 3);
-    for (let index = 0; index < count; index += 1) {
-      const angle = random() * Math.PI * 2;
-      const radius = Math.sqrt(random()) * 6.6;
-      values[index * 3] = Math.cos(angle) * radius;
-      values[index * 3 + 1] = 0.42 + random() * 2.1;
-      values[index * 3 + 2] = Math.sin(angle) * radius;
-    }
-    return values;
-  }, [count, seed]);
-
-  useFrame((state) => {
-    if (!points.current) return;
-    const material = points.current.material as THREE.PointsMaterial;
-    material.opacity = 0.52 + Math.sin(state.clock.elapsedTime * 2.1) * 0.22;
-    if (reducedMotion) return;
-    const attribute = points.current.geometry.getAttribute("position") as THREE.BufferAttribute;
-    const values = attribute.array as Float32Array;
-    for (let index = 0; index < count; index += 1) {
-      values[index * 3 + 1] += Math.sin(state.clock.elapsedTime + index * 1.73) * 0.0008;
-      values[index * 3] += Math.cos(state.clock.elapsedTime * 0.4 + index) * 0.00045;
-    }
-    attribute.needsUpdate = true;
-  });
-
-  return (
-    <points ref={points} frustumCulled={false}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-      </bufferGeometry>
-      <pointsMaterial
-        color={color}
-        depthWrite={false}
-        opacity={0.72}
-        size={0.105}
-        sizeAttenuation
-        transparent
-        toneMapped={false}
-      />
-    </points>
   );
 }
 

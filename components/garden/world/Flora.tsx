@@ -27,7 +27,6 @@ import type { WorldPalette } from "./palette";
 import type { TierSettings } from "./tiers";
 
 export interface FloraProps {
-  layout: GardenLayout;
   palette: WorldPalette;
   tier: TierSettings;
   /** Sway is off on low. */
@@ -35,12 +34,10 @@ export interface FloraProps {
   season: GardenSeason;
   weather: GardenWeather;
   reducedMotion: boolean;
-  seed: number;
   stats: GardenStats;
-  days: GardenDay[];
   surfaceSampler: PhotorealIslandSurfaceSampler;
-  /** Circles along the waterfall's outflow channel. */
-  channel: ReadonlyArray<FloraCircle>;
+  /** Placement from `useFloraLayout`, shared with the wildlife. */
+  flora: FloraLayout;
   onSelect?: (selection: GardenSelection | null) => void;
 }
 
@@ -599,33 +596,26 @@ function swayUniforms(mesh: THREE.InstancedMesh | null) {
 // Component
 // ---------------------------------------------------------------------------
 
-/**
- * Stepping stones, wildflowers, shrubs and mossy rocks. Six instanced draw
- * calls in all; the only per-frame work is the flowers' sway uniforms.
- */
-export function Flora({
-  layout,
-  palette,
-  tier,
-  quality,
-  season,
-  weather,
-  reducedMotion,
-  seed,
-  stats,
-  days,
-  surfaceSampler,
-  channel,
-  onSelect,
-}: FloraProps) {
-  const stoneRef = useRef<THREE.InstancedMesh>(null);
-  const stemRef = useRef<THREE.InstancedMesh>(null);
-  const headRef = useRef<THREE.InstancedMesh>(null);
-  const spikeRef = useRef<THREE.InstancedMesh>(null);
-  const shrubRef = useRef<THREE.InstancedMesh>(null);
-  const rockRef = useRef<THREE.InstancedMesh>(null);
-  const swayLevel = useRef(0);
+export interface FloraLayoutOptions {
+  layout: GardenLayout;
+  days: GardenDay[];
+  /** Circles along the waterfall's outflow channel. */
+  channel: ReadonlyArray<FloraCircle>;
+  surfaceSampler: PhotorealIslandSurfaceSampler;
+  seed: number;
+}
 
+/**
+ * Where the stepping stones, wildflowers, shrubs and rocks go. The scene
+ * computes it once and hands it to `Flora` and to the butterflies in `Life`.
+ */
+export function useFloraLayout({
+  layout,
+  days,
+  channel,
+  surfaceSampler,
+  seed,
+}: FloraLayoutOptions): FloraLayout {
   const meadow = useMemo(() => createMeadowBeds(days), [days]);
 
   // Key the placement on rounded tree positions so timeline playback only
@@ -637,7 +627,7 @@ export function Flora({
   const { islandRadius, flowerCount, shrubCount, rockCount } = layout;
   const { x: pondX, z: pondZ, scale: pondScale } = layout.pond;
   const { x: greatX, z: greatZ } = layout.greatTree;
-  const flora = useMemo(
+  return useMemo(
     () =>
       createFloraLayout({
         layout: {
@@ -677,6 +667,32 @@ export function Flora({
       treeKey,
     ],
   );
+
+}
+
+/**
+ * Stepping stones, wildflowers, shrubs and mossy rocks. Six instanced draw
+ * calls in all; the only per-frame work is the flowers' sway uniforms.
+ */
+export function Flora({
+  palette,
+  tier,
+  quality,
+  season,
+  weather,
+  reducedMotion,
+  stats,
+  surfaceSampler,
+  flora,
+  onSelect,
+}: FloraProps) {
+  const stoneRef = useRef<THREE.InstancedMesh>(null);
+  const stemRef = useRef<THREE.InstancedMesh>(null);
+  const headRef = useRef<THREE.InstancedMesh>(null);
+  const spikeRef = useRef<THREE.InstancedMesh>(null);
+  const shrubRef = useRef<THREE.InstancedMesh>(null);
+  const rockRef = useRef<THREE.InstancedMesh>(null);
+  const swayLevel = useRef(0);
 
   const instances = useMemo(
     () => buildInstances(flora, palette, season, surfaceSampler),

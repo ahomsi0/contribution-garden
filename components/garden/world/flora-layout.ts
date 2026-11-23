@@ -432,3 +432,30 @@ export function createFloraLayout(input: FloraLayoutInput): FloraLayout {
   const flowers = createFlowers(input, seededRandom(input.seed + 97), blocked, placed);
   return { stones, flowers, shrubs, rocks };
 }
+
+/**
+ * The centre of each wildflower cluster and how far its flowers reach, in
+ * cluster order. Butterflies wander between these.
+ */
+export function flowerClusters(flowers: ReadonlyArray<Wildflower>): FloraCircle[] {
+  const sums: { x: number; z: number; n: number }[] = [];
+  for (const flower of flowers) {
+    const sum = (sums[flower.cluster] ??= { x: 0, z: 0, n: 0 });
+    sum.x += flower.x;
+    sum.z += flower.z;
+    sum.n += 1;
+  }
+  const clusters: FloraCircle[] = [];
+  sums.forEach((sum, index) => {
+    if (!sum || sum.n === 0) return;
+    const x = sum.x / sum.n;
+    const z = sum.z / sum.n;
+    let radius = 0;
+    for (const flower of flowers) {
+      if (flower.cluster !== index) continue;
+      radius = Math.max(radius, Math.hypot(flower.x - x, flower.z - z));
+    }
+    clusters.push({ x, z, radius });
+  });
+  return clusters;
+}

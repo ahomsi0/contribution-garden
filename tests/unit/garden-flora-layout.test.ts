@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createFloraLayout,
   createMeadowBeds,
+  flowerClusters,
   greatTreeClearance,
   insidePond,
   onThickMeadow,
@@ -114,4 +115,19 @@ test("winter leaves almost no flowers", () => {
   const winter = createFloraLayout(floraInput(800, { season: "winter" }));
   const summer = createFloraLayout(floraInput(800));
   assert.ok(winter.flowers.length < summer.flowers.length * 0.2);
+});
+
+test("flower clusters sit at the centre of their flowers", () => {
+  const { flowers } = createFloraLayout(floraInput(40));
+  const clusters = flowerClusters(flowers);
+  const ids = new Set(flowers.map((f) => f.cluster));
+  assert.equal(clusters.length, ids.size);
+  assert.ok(clusters.length > 1);
+  for (const flower of flowers) {
+    const near = clusters.some(
+      (c) => Math.hypot(flower.x - c.x, flower.z - c.z) <= c.radius + 1e-9,
+    );
+    assert.ok(near, "every flower lies within a cluster's reach");
+  }
+  assert.deepEqual(flowerClusters([]), []);
 });
