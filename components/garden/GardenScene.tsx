@@ -3,6 +3,7 @@
 import {
   Suspense,
   type ComponentRef,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -584,7 +585,6 @@ function GardenWorld({
       <WeatherSystem
         density={density}
         palette={world}
-        quality={quality}
         reducedMotion={reducedMotion}
         seed={seed + 997}
         season={season}
@@ -849,16 +849,15 @@ function CelestialBody({ color }: { color: string }) {
 function WeatherSystem({
   density,
   palette,
-  quality,
   reducedMotion,
   seed,
   season,
   timeOfDay,
   weather,
 }: {
+  /** Tier density: every particle count scales with it. */
   density: number;
   palette: WorldPalette;
-  quality: GardenQuality;
   reducedMotion: boolean;
   seed: number;
   season: GardenSeason;
@@ -903,8 +902,13 @@ function WeatherSystem({
           seed={seed + 5}
         />
       ) : null}
-      {quality === "low" && weather === "sunny" && timeOfDay !== "night" ? (
-        <AmbientMotes color={palette.sun} count={Math.round(95 * density)} seed={seed + 6} reducedMotion={reducedMotion} />
+      {weather === "sunny" && timeOfDay !== "night" ? (
+        <AmbientMotes
+          color={palette.sun}
+          count={Math.round(95 * density)}
+          seed={seed + 6}
+          reducedMotion={reducedMotion}
+        />
       ) : null}
     </group>
   );
@@ -1185,7 +1189,39 @@ function GardenWalkthroughControls({
     [layout.greatTree, layout.yearTrees],
   );
   const walkRadius = layout.islandRadius - 0.7;
-  const pond = layout.pond;
+  const { x: pondX, z: pondZ, scale: pondScale } = layout.pond;
+  const pond = useMemo(
+    () => ({ x: pondX, z: pondZ, scale: pondScale }),
+    [pondScale, pondX, pondZ],
+  );
+  /**
+   * Whether a step from (fromX, fromZ) may land on (x, z): on the island,
+   * inside the walk radius, out of the pond, off a trunk and not up or down
+   * a ledge. A step into a trunk is blocked; a step that leaves one never is,
+   * so the walker can't get stuck. Built once, not per frame.
+   */
+  const isWalkable = useCallback(
+    (x: number, z: number, fromX: number, fromZ: number, currentGround: number) => {
+      const sampledHeight = surfaceSampler(x, z);
+      if (sampledHeight === null) return false;
+      if (Math.hypot(x, z) > walkRadius) return false;
+      if (!isOutsideMeadowPond(x, z, pond, 1.28)) return false;
+      if (Math.abs(sampledHeight + ISLAND_SURFACE_OFFSET - currentGround) >= 0.46) {
+        return false;
+      }
+      for (const obstacle of obstacles) {
+        const distance = Math.hypot(x - obstacle.x, z - obstacle.z);
+        if (
+          distance < obstacle.radius &&
+          distance < Math.hypot(fromX - obstacle.x, fromZ - obstacle.z)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    },
+    [obstacles, pond, surfaceSampler, walkRadius],
+  );
 
   useEffect(() => {
     inputRef.current = input;
@@ -1439,35 +1475,15 @@ function GardenWalkthroughControls({
         ISLAND_SURFACE_OFFSET;
       const fromX = camera.position.x;
       const fromZ = camera.position.z;
-      // A step into a trunk is blocked; a step that leaves one never is, so
-      // the walker can't get stuck.
-      const hitsTrunk = (x: number, z: number) =>
-        obstacles.some((obstacle) => {
-          const distance = Math.hypot(x - obstacle.x, z - obstacle.z);
-          return (
-            distance < obstacle.radius &&
-            distance < Math.hypot(fromX - obstacle.x, fromZ - obstacle.z)
-          );
-        });
-      const isWalkable = (x: number, z: number) => {
-        const sampledHeight = surfaceSampler(x, z);
-        return (
-          sampledHeight !== null &&
-          Math.hypot(x, z) <= walkRadius &&
-          isOutsideMeadowPond(x, z, pond, 1.28) &&
-          !hitsTrunk(x, z) &&
-          Math.abs(sampledHeight + ISLAND_SURFACE_OFFSET - currentGround) < 0.46
-        );
-      };
 
       const nextX = camera.position.x + movement.x * distance;
       let resolvedX = camera.position.x;
-      if (isWalkable(nextX, camera.position.z)) {
+      if (isWalkable(nextX, camera.position.z, fromX, fromZ, currentGround)) {
         resolvedX = nextX;
       }
       const nextZ = camera.position.z + movement.z * distance;
       let resolvedZ = camera.position.z;
-      if (isWalkable(resolvedX, nextZ)) {
+      if (isWalkable(resolvedX, nextZ, fromX, fromZ, currentGround)) {
         resolvedZ = nextZ;
       }
       camera.position.x = resolvedX;

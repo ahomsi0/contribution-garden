@@ -1,7 +1,7 @@
 "use client";
 
 import { Bird, ChevronDown, Flower2, Sparkles, Sprout, TreeDeciduous, Trees, Waves } from "lucide-react";
-import { type MouseEvent, useEffect, useState } from "react";
+import { type SyntheticEvent, useEffect, useState } from "react";
 import type { GardenProvider } from "@/lib/garden-provider";
 
 const LEGEND_STORAGE_KEY = "cg-legend-open";
@@ -45,9 +45,12 @@ export function GardenLegend({ provider = "github" }: { provider?: GardenProvide
     setOpen(next);
   }, []);
 
-  const toggle = (event: MouseEvent<HTMLElement>) => {
-    event.preventDefault();
-    const next = !open;
+  // The browser opens and closes the details itself; this mirrors it. A
+  // toggle that only echoes our own `open` (the stored or viewport default
+  // applied on mount) is not the reader's choice, so it isn't saved.
+  const toggle = (event: SyntheticEvent<HTMLDetailsElement>) => {
+    const next = event.currentTarget.open;
+    if (next === open) return;
     setOpen(next);
     try {
       window.localStorage.setItem(LEGEND_STORAGE_KEY, next ? "1" : "0");
@@ -57,8 +60,8 @@ export function GardenLegend({ provider = "github" }: { provider?: GardenProvide
   };
 
   return (
-    <details className="cg-legend" open={open}>
-      <summary onClick={toggle}>
+    <details className="cg-legend" open={open} onToggle={toggle}>
+      <summary>
         <span>Reading the garden</span>
         <ChevronDown size={13} aria-hidden="true" />
       </summary>

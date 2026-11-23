@@ -19,12 +19,6 @@ interface PhotorealIslandGeometryOptions {
   seed: number;
 }
 
-interface PhotorealIslandSurfaceSampleOptions
-  extends PhotorealIslandGeometryOptions {
-  x: number;
-  z: number;
-}
-
 export type PhotorealIslandSurfaceSampler = (
   x: number,
   z: number,

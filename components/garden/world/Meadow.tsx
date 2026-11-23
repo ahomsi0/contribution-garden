@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { type ThreeEvent, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -242,6 +242,77 @@ function meadowUniforms(mesh: THREE.InstancedMesh | null) {
   return (material.userData.uniforms as MeadowUniforms | undefined) ?? null;
 }
 
+/** Sets the sway, and the time unless it is null (reduced motion). */
+function swayMeadow(mesh: THREE.InstancedMesh | null, sway: number, time: number | null) {
+  const uniforms = meadowUniforms(mesh);
+  if (!uniforms) return;
+  uniforms.uSway.value = sway;
+  if (time !== null) uniforms.uTime.value = time;
+}
+
+/** Writes every tuft's matrix, and bounds that cover them all. */
+function placeTufts(
+  mesh: THREE.InstancedMesh,
+  tufts: ReadonlyArray<MeadowTuft>,
+  surfaceSampler: PhotorealIslandSurfaceSampler,
+  winter: boolean,
+) {
+  const dummy = new THREE.Object3D();
+  tufts.forEach((tuft, index) => {
+    const level = Math.min(4, Math.max(1, tuft.level));
+    const jitter = Math.min(
+      1.3,
+      Math.max(0.75, tuft.scale / (0.61 + level * 0.12)),
+    );
+    const fuller = Math.min(3, tuft.girth);
+    const height =
+      LEVEL_HEIGHT[level] * jitter * (1 + (fuller - 1) * 0.12) * (winter ? 0.45 : 1);
+    const width =
+      LEVEL_WIDTH[level] * (0.9 + jitter * 0.1) * Math.sqrt(fuller) * (winter ? 0.85 : 1);
+    const surfaceY =
+      (surfaceSampler(tuft.x, tuft.z) ?? 0) + ISLAND_SURFACE_OFFSET;
+    dummy.position.set(tuft.x, surfaceY - 0.008, tuft.z);
+    dummy.rotation.set(
+      (tuft.variant - 1.5) * 0.04,
+      tuft.rotation,
+      (tuft.variant % 2 ? 1 : -1) * 0.05,
+    );
+    dummy.scale.set(width, height, width);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  // Bounds cover every tuft, revealed or not, so culling never clips the
+  // meadow as it fills in.
+  const shown = mesh.count;
+  mesh.count = tufts.length;
+  mesh.computeBoundingSphere();
+  mesh.count = shown;
+}
+
+/** Root colour per instance; tip colour in the geometry's aTip attribute. */
+function paintTufts(
+  mesh: THREE.InstancedMesh,
+  geometry: THREE.BufferGeometry,
+  tufts: ReadonlyArray<MeadowTuft>,
+  shades: MeadowShades,
+) {
+  const tips = geometry.getAttribute("aTip") as THREE.InstancedBufferAttribute;
+  tufts.forEach((tuft, index) => {
+    const level = Math.min(4, Math.max(1, tuft.level));
+    mesh.setColorAt(index, shades.root[level]);
+    const tip = tuftTip(tuft, shades);
+    tips.setXYZ(index, tip.r, tip.g, tip.b);
+  });
+  tips.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+}
+
+/** Draws only the first `count` tufts: the days the timeline has reached. */
+function revealTufts(mesh: THREE.InstancedMesh, count: number) {
+  mesh.count = count;
+}
+
 function formatGardenDate(value: string) {
   const date = new Date(`${value}T12:00:00`);
   if (Number.isNaN(date.getTime())) return value;
@@ -269,7 +340,9 @@ export function Meadow({
   visibleThrough,
   onSelect,
 }: MeadowProps) {
-  const mesh = useRef<THREE.InstancedMesh>(null);
+  // State, not a ref, so the effects that write instances run again whenever
+  // R3F replaces the mesh (its args changed).
+  const [mesh, setMesh] = useState<THREE.InstancedMesh | null>(null);
   const density = tier.density;
 
   // The whole history's tufts are built once and revealed by instance count
@@ -312,68 +385,21 @@ export function Meadow({
 
   // Placement: only when the tufts, the ground or winter's short grass change.
   useLayoutEffect(() => {
-    const instanced = mesh.current;
-    if (!instanced) return;
-    const dummy = new THREE.Object3D();
-    tufts.forEach((tuft, index) => {
-      const level = Math.min(4, Math.max(1, tuft.level));
-      const jitter = Math.min(
-        1.3,
-        Math.max(0.75, tuft.scale / (0.61 + level * 0.12)),
-      );
-      const fuller = Math.min(3, tuft.girth);
-      const height =
-        LEVEL_HEIGHT[level] * jitter * (1 + (fuller - 1) * 0.12) * (winter ? 0.45 : 1);
-      const width =
-        LEVEL_WIDTH[level] * (0.9 + jitter * 0.1) * Math.sqrt(fuller) * (winter ? 0.85 : 1);
-      const surfaceY =
-        (surfaceSampler(tuft.x, tuft.z) ?? 0) + ISLAND_SURFACE_OFFSET;
-      dummy.position.set(tuft.x, surfaceY - 0.008, tuft.z);
-      dummy.rotation.set(
-        (tuft.variant - 1.5) * 0.04,
-        tuft.rotation,
-        (tuft.variant % 2 ? 1 : -1) * 0.05,
-      );
-      dummy.scale.set(width, height, width);
-      dummy.updateMatrix();
-      instanced.setMatrixAt(index, dummy.matrix);
-    });
-    instanced.instanceMatrix.needsUpdate = true;
-    // Bounds cover every tuft, revealed or not, so culling never clips the
-    // meadow as it fills in.
-    const shown = instanced.count;
-    instanced.count = tufts.length;
-    instanced.computeBoundingSphere();
-    instanced.count = shown;
-  }, [geometry, surfaceSampler, tufts, winter]);
+    if (mesh) placeTufts(mesh, tufts, surfaceSampler, winter);
+  }, [geometry, mesh, surfaceSampler, tufts, winter]);
 
   // Colour: root per instance, tip in the geometry's aTip attribute.
   useLayoutEffect(() => {
-    const instanced = mesh.current;
-    if (!instanced) return;
-    const tips = geometry.getAttribute("aTip") as THREE.InstancedBufferAttribute;
-    tufts.forEach((tuft, index) => {
-      const level = Math.min(4, Math.max(1, tuft.level));
-      instanced.setColorAt(index, shades.root[level]);
-      const tip = tuftTip(tuft, shades);
-      tips.setXYZ(index, tip.r, tip.g, tip.b);
-    });
-    tips.needsUpdate = true;
-    if (instanced.instanceColor) instanced.instanceColor.needsUpdate = true;
-  }, [geometry, shades, tufts]);
+    if (mesh) paintTufts(mesh, geometry, tufts, shades);
+  }, [geometry, mesh, shades, tufts]);
 
   // Reveal: a cheap instance count, the only work most timeline steps do.
   useLayoutEffect(() => {
-    const instanced = mesh.current;
-    if (!instanced) return;
-    instanced.count = Math.min(shownCount, tufts.length);
-  }, [geometry, shownCount, tufts]);
+    if (mesh) revealTufts(mesh, Math.min(shownCount, tufts.length));
+  }, [geometry, mesh, shownCount, tufts]);
 
   useFrame((state) => {
-    const uniforms = meadowUniforms(mesh.current);
-    if (!uniforms) return;
-    uniforms.uSway.value = sway;
-    if (!reducedMotion) uniforms.uTime.value = state.clock.elapsedTime;
+    swayMeadow(mesh, sway, reducedMotion ? null : state.clock.elapsedTime);
   });
 
   const cursorHandlers = useMemo(
@@ -438,7 +464,7 @@ export function Meadow({
 
   return (
     <instancedMesh
-      ref={mesh}
+      ref={setMesh}
       args={[geometry, material, tufts.length]}
       // Grass only receives shadows; its own would be too fine to read.
       receiveShadow={tier.shadows}

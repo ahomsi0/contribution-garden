@@ -2029,10 +2029,13 @@
 .garden-ui[data-cinematic="true"] .cg-atmosphere-position,
 .garden-ui[data-cinematic="true"] .cg-ambient-indicator,
 .garden-ui[data-cinematic="true"] .cg-corner-coordinate {
+  /* Hidden, not just transparent, so nothing in them takes keyboard focus
+     during the flythrough (as with the walking rule). */
+  visibility: hidden;
   opacity: 0;
   transform: translateY(5px);
   pointer-events: none;
-  transition: opacity 400ms ease, transform 400ms ease;
+  transition: opacity 400ms ease, transform 400ms ease, visibility 400ms ease;
 }
 
 .garden-ui[data-cinematic="true"] .cg-topbar {
@@ -2727,7 +2730,7 @@
   cursor: pointer;
   color: #4c5d43;
   font-family: var(--cg-mono);
-  font-size: 7px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   list-style: none;
   text-transform: uppercase;
@@ -2895,7 +2898,21 @@
   width: min(300px, 24vw);
   max-height: calc(100% - 96px);
   overflow-y: auto;
-  scrollbar-width: none;
+  /* A thin scrollbar shows only when the panel and legend overflow. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(201, 216, 139, 0.45) transparent;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-position::-webkit-scrollbar {
+  width: 4px;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-position::-webkit-scrollbar-thumb {
+  background: rgba(201, 216, 139, 0.45);
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-position::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .garden-ui[data-presentation="cinematic"] .cg-profile-panel {

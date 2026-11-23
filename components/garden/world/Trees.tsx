@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type ThreeEvent, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import {
@@ -670,6 +670,26 @@ const MONTHS = [
 
 const MOTE_COUNT = 7;
 
+/** A small ring of glow motes in the great tree's crown. */
+function placeMotes(motes: THREE.InstancedMesh, colour: string) {
+  const dummy = new THREE.Object3D();
+  for (let index = 0; index < MOTE_COUNT; index += 1) {
+    const angle = (index / MOTE_COUNT) * TAU;
+    const radius = 2.0 + (index % 2) * 0.6;
+    dummy.position.set(
+      Math.cos(angle) * radius,
+      3.1 + (index % 3) * 0.35,
+      Math.sin(angle) * radius,
+    );
+    dummy.scale.setScalar(0.06 + (index % 2) * 0.025);
+    dummy.updateMatrix();
+    motes.setMatrixAt(index, dummy.matrix);
+  }
+  motes.instanceMatrix.needsUpdate = true;
+  motes.computeBoundingSphere();
+  (motes.material as THREE.MeshBasicMaterial).color.set(colour);
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -692,12 +712,15 @@ export function Trees({
   surfaceSampler,
   onSelect,
 }: TreesProps) {
-  const canopyRef = useRef<THREE.InstancedMesh>(null);
-  const coneRef = useRef<THREE.InstancedMesh>(null);
-  const trunkRef = useRef<THREE.InstancedMesh>(null);
-  const branchRef = useRef<THREE.InstancedMesh>(null);
+  // Meshes are state, not refs, so the effects that write their instances
+  // run again whenever R3F replaces one (its args changed).
+  const [canopyMesh, setCanopyMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [coneMesh, setConeMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [trunkMesh, setTrunkMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [branchMesh, setBranchMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [moteMesh, setMoteMesh] = useState<THREE.InstancedMesh | null>(null);
   const moteRef = useRef<THREE.Group>(null);
-  const moteMeshRef = useRef<THREE.InstancedMesh>(null);
+  const foliageMeshes = useMemo(() => [canopyMesh, coneMesh], [canopyMesh, coneMesh]);
   const swayLevel = useRef(0);
 
   // The great tree's shape depends only on its seed and whether the season
@@ -772,37 +795,29 @@ export function Trees({
   );
 
   useLayoutEffect(() => {
-    applyBatch(canopyRef.current, forest.canopy);
-    applyBatch(coneRef.current, forest.cones);
-    applyBatch(trunkRef.current, forest.trunks);
-    applyBatch(branchRef.current, forest.branches);
-  }, [forest]);
+    applyBatch(canopyMesh, forest.canopy);
+    applyBatch(coneMesh, forest.cones);
+    applyBatch(trunkMesh, forest.trunks);
+    applyBatch(branchMesh, forest.branches);
+  }, [
+    branchGeometry,
+    branchMesh,
+    canopyGeometry,
+    canopyMesh,
+    coneGeometry,
+    coneMesh,
+    forest,
+    trunkGeometry,
+    trunkMesh,
+  ]);
 
   const snowColour = palette.snow;
   const glowColour = palette.waterGlow;
   const glowing = layout.greatTree.glowing;
   useLayoutEffect(() => {
-    const motes = moteMeshRef.current;
-    if (motes) {
-      const dummy = new THREE.Object3D();
-      for (let index = 0; index < MOTE_COUNT; index += 1) {
-        const angle = (index / MOTE_COUNT) * TAU;
-        const radius = 2.0 + (index % 2) * 0.6;
-        dummy.position.set(
-          Math.cos(angle) * radius,
-          3.1 + (index % 3) * 0.35,
-          Math.sin(angle) * radius,
-        );
-        dummy.scale.setScalar(0.06 + (index % 2) * 0.025);
-        dummy.updateMatrix();
-        motes.setMatrixAt(index, dummy.matrix);
-      }
-      motes.instanceMatrix.needsUpdate = true;
-      motes.computeBoundingSphere();
-      (motes.material as THREE.MeshBasicMaterial).color.set(glowColour);
-    }
+    if (moteMesh) placeMotes(moteMesh, glowColour);
 
-    for (const mesh of [canopyRef.current, coneRef.current]) {
+    for (const mesh of foliageMeshes) {
       const uniforms = foliageUniforms(mesh);
       if (!uniforms) continue;
       uniforms.uSnow.value = snowColour ? 1 : 0;
@@ -810,7 +825,7 @@ export function Trees({
       uniforms.uGlow.value = glowing ? 0.25 : 0;
       uniforms.uGlowColor.value.set(glowColour);
     }
-  }, [forest, glowColour, glowing, snowColour]);
+  }, [foliageMeshes, glowColour, glowing, moteMesh, snowColour]);
 
   const windEnabled = !reducedMotion && quality !== "low";
   const windTarget = weather === "wind" ? 1 : weather === "rain" ? 0.6 : 0.35;
@@ -824,7 +839,7 @@ export function Trees({
     if (!windEnabled) return;
     // Ease toward the weather's wind so a change never snaps the canopy.
     swayLevel.current += (windTarget - swayLevel.current) * Math.min(1, delta * 1.5);
-    for (const mesh of [canopyRef.current, coneRef.current]) {
+    for (const mesh of foliageMeshes) {
       const uniforms = foliageUniforms(mesh);
       if (!uniforms) continue;
       uniforms.uTime.value = state.clock.elapsedTime;
@@ -907,7 +922,7 @@ export function Trees({
       {canopy.owners.length > 0 ? (
         <instancedMesh
           key={`canopy-${canopy.owners.length}`}
-          ref={canopyRef}
+          ref={setCanopyMesh}
           args={[canopyGeometry, canopyMaterial, canopy.owners.length]}
           castShadow={shadows}
           receiveShadow={shadows}
@@ -918,7 +933,7 @@ export function Trees({
       {cones.owners.length > 0 ? (
         <instancedMesh
           key={`cones-${cones.owners.length}`}
-          ref={coneRef}
+          ref={setConeMesh}
           args={[coneGeometry, coneMaterial, cones.owners.length]}
           castShadow={shadows}
           receiveShadow={shadows}
@@ -929,7 +944,7 @@ export function Trees({
       {trunks.owners.length > 0 ? (
         <instancedMesh
           key={`trunks-${trunks.owners.length}`}
-          ref={trunkRef}
+          ref={setTrunkMesh}
           args={[trunkGeometry, woodMaterial, trunks.owners.length]}
           castShadow={shadows}
           receiveShadow={shadows}
@@ -940,7 +955,7 @@ export function Trees({
       {branches.owners.length > 0 ? (
         <instancedMesh
           key={`branches-${branches.owners.length}`}
-          ref={branchRef}
+          ref={setBranchMesh}
           args={[branchGeometry, woodMaterial, branches.owners.length]}
           castShadow={shadows}
           receiveShadow={shadows}
@@ -969,7 +984,7 @@ export function Trees({
         >
           <group ref={moteRef}>
             <instancedMesh
-              ref={moteMeshRef}
+              ref={setMoteMesh}
               args={[moteGeometry, moteMaterial, MOTE_COUNT]}
               raycast={() => null}
             />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type ThreeEvent, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -686,12 +686,18 @@ export function Flora({
   flora,
   onSelect,
 }: FloraProps) {
-  const stoneRef = useRef<THREE.InstancedMesh>(null);
-  const stemRef = useRef<THREE.InstancedMesh>(null);
-  const headRef = useRef<THREE.InstancedMesh>(null);
-  const spikeRef = useRef<THREE.InstancedMesh>(null);
-  const shrubRef = useRef<THREE.InstancedMesh>(null);
-  const rockRef = useRef<THREE.InstancedMesh>(null);
+  // Meshes are state, not refs, so the effects that write their instances
+  // run again whenever R3F replaces one (its args changed).
+  const [stoneMesh, setStoneMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [stemMesh, setStemMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [headMesh, setHeadMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [spikeMesh, setSpikeMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [shrubMesh, setShrubMesh] = useState<THREE.InstancedMesh | null>(null);
+  const [rockMesh, setRockMesh] = useState<THREE.InstancedMesh | null>(null);
+  const swayMeshes = useMemo(
+    () => [stemMesh, headMesh, spikeMesh],
+    [headMesh, spikeMesh, stemMesh],
+  );
   const swayLevel = useRef(0);
 
   const instances = useMemo(
@@ -755,45 +761,59 @@ export function Flora({
   );
 
   useLayoutEffect(() => {
-    applyBatch(stoneRef.current, instances.stones);
-    applyBatch(stemRef.current, instances.stems);
-    applyBatch(headRef.current, instances.heads);
-    applyBatch(spikeRef.current, instances.spikes);
-    applyBatch(shrubRef.current, instances.shrubs);
-    applyBatch(rockRef.current, instances.rocks);
-  }, [instances]);
+    applyBatch(stoneMesh, instances.stones);
+    applyBatch(stemMesh, instances.stems);
+    applyBatch(headMesh, instances.heads);
+    applyBatch(spikeMesh, instances.spikes);
+    applyBatch(shrubMesh, instances.shrubs);
+    applyBatch(rockMesh, instances.rocks);
+  }, [
+    headGeometry,
+    headMesh,
+    instances,
+    rockGeometry,
+    rockMesh,
+    shrubGeometry,
+    shrubMesh,
+    spikeGeometry,
+    spikeMesh,
+    stemGeometry,
+    stemMesh,
+    stoneGeometry,
+    stoneMesh,
+  ]);
 
   // Moss on rocks (snow in winter); snow on shrub crowns in winter only.
   const snow = palette.snow;
   const moss = palette.evergreen[1];
   const grass = palette.grass[1];
   useLayoutEffect(() => {
-    const rockUniforms = capUniforms(rockRef.current);
+    const rockUniforms = capUniforms(rockMesh);
     if (rockUniforms) {
       rockUniforms.uCapColor.value.set(snow ?? grass).lerp(new THREE.Color(snow ?? moss), 0.45);
       rockUniforms.uCapAmount.value = snow ? 0.92 : 0.9;
     }
-    const shrubUniforms = capUniforms(shrubRef.current);
+    const shrubUniforms = capUniforms(shrubMesh);
     if (shrubUniforms) {
       shrubUniforms.uCapColor.value.set(snow ?? "#ffffff");
       shrubUniforms.uCapAmount.value = snow ? 0.75 : 0;
     }
-  }, [grass, instances, moss, snow]);
+  }, [grass, moss, rockMesh, shrubMesh, snow]);
 
   const swayEnabled = !reducedMotion && quality !== "low";
   const swayTarget = weather === "wind" ? 0.16 : weather === "rain" ? 0.1 : 0.06;
   useEffect(() => {
     if (swayEnabled) return;
-    for (const mesh of [stemRef.current, headRef.current, spikeRef.current]) {
+    for (const mesh of swayMeshes) {
       const uniforms = swayUniforms(mesh);
       if (uniforms) uniforms.uSway.value = 0;
     }
-  }, [swayEnabled]);
+  }, [swayEnabled, swayMeshes]);
 
   useFrame((state, delta) => {
     if (!swayEnabled) return;
     swayLevel.current += (swayTarget - swayLevel.current) * Math.min(1, delta * 1.5);
-    for (const mesh of [stemRef.current, headRef.current, spikeRef.current]) {
+    for (const mesh of swayMeshes) {
       const uniforms = swayUniforms(mesh);
       if (!uniforms) continue;
       uniforms.uTime.value = state.clock.elapsedTime;
@@ -848,7 +868,7 @@ export function Flora({
       {stones.matrices.length > 0 ? (
         <instancedMesh
           key={`stones-${stones.matrices.length}`}
-          ref={stoneRef}
+          ref={setStoneMesh}
           args={[stoneGeometry, stoneMaterial, stones.matrices.length]}
           receiveShadow={shadows}
         />
@@ -856,7 +876,7 @@ export function Flora({
       {stems.matrices.length > 0 ? (
         <instancedMesh
           key={`stems-${stems.matrices.length}`}
-          ref={stemRef}
+          ref={setStemMesh}
           args={[stemGeometry, stemMaterial, stems.matrices.length]}
           receiveShadow={shadows}
           onClick={selectFlower(stems.owners)}
@@ -866,7 +886,7 @@ export function Flora({
       {heads.matrices.length > 0 ? (
         <instancedMesh
           key={`heads-${heads.matrices.length}`}
-          ref={headRef}
+          ref={setHeadMesh}
           args={[headGeometry, headMaterial, heads.matrices.length]}
           receiveShadow={shadows}
           onClick={selectFlower(heads.owners)}
@@ -876,7 +896,7 @@ export function Flora({
       {spikes.matrices.length > 0 ? (
         <instancedMesh
           key={`spikes-${spikes.matrices.length}`}
-          ref={spikeRef}
+          ref={setSpikeMesh}
           args={[spikeGeometry, spikeMaterial, spikes.matrices.length]}
           receiveShadow={shadows}
           onClick={selectFlower(spikes.owners)}
@@ -886,7 +906,7 @@ export function Flora({
       {shrubs.matrices.length > 0 ? (
         <instancedMesh
           key={`shrubs-${shrubs.matrices.length}`}
-          ref={shrubRef}
+          ref={setShrubMesh}
           args={[shrubGeometry, shrubMaterial, shrubs.matrices.length]}
           castShadow={shadows}
           receiveShadow={shadows}
@@ -895,7 +915,7 @@ export function Flora({
       {rocks.matrices.length > 0 ? (
         <instancedMesh
           key={`rocks-${rocks.matrices.length}`}
-          ref={rockRef}
+          ref={setRockMesh}
           args={[rockGeometry, rockMaterial, rocks.matrices.length]}
           castShadow={shadows}
           receiveShadow={shadows}
