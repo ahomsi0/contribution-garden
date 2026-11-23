@@ -2,6 +2,7 @@
 
 import {
   Suspense,
+  type ComponentRef,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -23,9 +24,22 @@ import type {
   GardenWeather,
 } from "./types";
 import {
+  createPhotorealIslandEdge,
   createPhotorealIslandSurfaceSampler,
   type PhotorealIslandSurfaceSampler,
 } from "./photoreal-geometry";
+import {
+  cameraFraming,
+  CAMERA_FOV,
+  type CameraFraming,
+  type FramingPeak,
+  GREAT_TREE_TOP,
+  REFERENCE_DISTANCE,
+  sameFraming,
+  YEAR_CROWN_RADIUS,
+  YEAR_TREE_TOP,
+} from "./world/camera";
+import { Effects } from "./world/Effects";
 import { Flora, useFloraLayout } from "./world/Flora";
 import { flowerClusters } from "./world/flora-layout";
 import { Island, ISLAND_SURFACE_OFFSET } from "./world/Island";
@@ -65,8 +79,8 @@ interface GardenPalette {
   mote: string;
 }
 
-/** The base pond the walkthrough steers around. */
-const WALK_POND = { x: -2.35, z: 1.25, scale: 1 };
+/** How long the orbit camera takes to ease to a new framing, seconds. */
+const REFRAME_SECONDS = 0.8;
 const EMPTY_WALK_INPUT: GardenWalkInput = {
   forward: false,
   backward: false,
@@ -305,9 +319,9 @@ export function GardenScene({
         data-garden-canvas="true"
         camera={{
           position: [15.4, 10.8, 18.8],
-          fov: 42,
+          fov: CAMERA_FOV,
           near: 0.1,
-          far: 90,
+          far: 160,
         }}
         dpr={tier.dpr}
         frameloop="always"
@@ -377,7 +391,12 @@ function GardenCaptureBridge() {
       }>;
       if (!event.detail?.complete) return;
       event.preventDefault();
+      // The effect composer turns the renderer's tone mapping off and applies
+      // it as a pass; a direct render needs it back so colours match.
+      const toneMapping = gl.toneMapping;
+      gl.toneMapping = THREE.NeutralToneMapping;
       gl.render(scene, camera);
+      gl.toneMapping = toneMapping;
       gl.domElement.toBlob(event.detail.complete, "image/png");
     };
 
@@ -518,9 +537,39 @@ function GardenWorld({
   });
   const clusters = useMemo(() => flowerClusters(flora.flowers), [flora.flowers]);
 
+  // The channel's last circle sits on the rim point the waterfall pours over.
+  const waterfall = channel[channel.length - 1];
+  const islandEdge = useMemo(
+    () => createPhotorealIslandEdge({ radius: islandRadius, quality, seed }),
+    [islandRadius, quality, seed],
+  );
+  const aspect = useThree(
+    (state) =>
+      Math.round((state.size.width / Math.max(1, state.size.height)) * 20) / 20,
+  );
+  const framing = useMemo(() => {
+    const groundAt = (x: number, z: number) =>
+      (surfaceSampler(x, z) ?? 0) + ISLAND_SURFACE_OFFSET;
+    const great = layout.greatTree;
+    const peaks: FramingPeak[] = layout.yearTrees.map((tree) => ({
+      x: tree.x,
+      z: tree.z,
+      top: groundAt(tree.x, tree.z) + YEAR_TREE_TOP * tree.scale,
+      crownRadius: YEAR_CROWN_RADIUS * tree.scale,
+    }));
+    return cameraFraming(
+      layout.islandRadius,
+      groundAt(great.x, great.z) + GREAT_TREE_TOP * great.scale,
+      Math.atan2(waterfall.z, waterfall.x),
+      { aspect, greatTree: great, peaks, rimRadiusAt: islandEdge.rimRadiusAt },
+    );
+  }, [aspect, islandEdge, layout, surfaceSampler, waterfall]);
+  const orbiting = !walkthrough && !flythrough;
+
   return (
     <>
       <SkyAndLights
+        fogScale={clamp(framing.distance / REFERENCE_DISTANCE, 0.9, 2.2)}
         palette={world}
         reducedMotion={reducedMotion}
         seed={seed}
@@ -610,33 +659,189 @@ function GardenWorld({
         weather={weather}
       />
 
+      <Effects tier={tier} />
+
       {walkthrough ? (
         <GardenWalkthroughControls
           input={walkInput}
-          islandRadius={islandRadius}
+          layout={layout}
           onExit={onWalkthroughExit}
           surfaceSampler={surfaceSampler}
         />
       ) : flythrough ? (
         <CameraFlythrough
+          framing={framing}
+          islandRadius={islandRadius}
           reducedMotion={reducedMotion}
+          waterfall={waterfall}
           onComplete={onFlythroughComplete}
         />
-      ) : (
-        <OrbitControls
-          enableDamping
-          dampingFactor={0.055}
-          enablePan={false}
-          maxDistance={34}
-          minDistance={12}
-          maxPolarAngle={Math.PI * 0.47}
-          minPolarAngle={Math.PI * 0.19}
-          rotateSpeed={0.55}
-          target={[0, -0.18, 0]}
-          zoomSpeed={0.65}
-        />
-      )}
+      ) : null}
+      <OrbitRig
+        enabled={orbiting}
+        framing={framing}
+        reducedMotion={reducedMotion}
+      />
     </>
+  );
+}
+
+interface FramingTween {
+  fromTarget: THREE.Vector3;
+  toTarget: THREE.Vector3;
+  from: THREE.Spherical;
+  to: THREE.Spherical;
+  elapsed: number;
+}
+
+/**
+ * The orbit camera. It starts at the framing for this island and, when the
+ * framing changes (another user, or the timeline growing the island), eases
+ * there over REFRAME_SECONDS instead of jumping. Once the user has orbited or
+ * zoomed, a re-frame keeps their viewing direction and only rescales the
+ * distance and moves the target. Grabbing the controls cancels an ease.
+ */
+function OrbitRig({
+  enabled,
+  framing,
+  reducedMotion,
+}: {
+  enabled: boolean;
+  framing: CameraFraming;
+  reducedMotion: boolean;
+}) {
+  const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
+  const camera = useThree((state) => state.camera);
+  const framed = useRef<CameraFraming | null>(null);
+  const stale = useRef(false);
+  const userMoved = useRef(false);
+  const tween = useRef<FramingTween | null>(null);
+  const scratch = useMemo(
+    () => ({ spherical: new THREE.Spherical(), offset: new THREE.Vector3() }),
+    [],
+  );
+
+  const applyTween = (active: FramingTween, amount: number) => {
+    const orbit = controls.current;
+    if (!orbit) return;
+    const { from, to } = active;
+    const turn =
+      THREE.MathUtils.euclideanModulo(to.theta - from.theta + Math.PI, Math.PI * 2) -
+      Math.PI;
+    scratch.spherical.set(
+      THREE.MathUtils.lerp(from.radius, to.radius, amount),
+      THREE.MathUtils.lerp(from.phi, to.phi, amount),
+      from.theta + turn * amount,
+    );
+    orbit.target.lerpVectors(active.fromTarget, active.toTarget, amount);
+    scratch.offset.setFromSpherical(scratch.spherical);
+    camera.position.copy(orbit.target).add(scratch.offset);
+    camera.lookAt(orbit.target);
+  };
+
+  const finishTween = () => {
+    const orbit = controls.current;
+    tween.current = null;
+    if (!orbit || !framed.current) return;
+    orbit.minDistance = framed.current.minDistance;
+    orbit.maxDistance = framed.current.maxDistance;
+  };
+
+  useLayoutEffect(() => {
+    const orbit = controls.current;
+    if (!orbit) return;
+    const previous = framed.current;
+
+    if (!previous) {
+      // First framing: place the camera directly.
+      framed.current = framing;
+      camera.position.set(...framing.position);
+      orbit.target.set(...framing.target);
+      orbit.minDistance = framing.minDistance;
+      orbit.maxDistance = framing.maxDistance;
+      camera.lookAt(orbit.target);
+      orbit.update();
+      stale.current = !enabled;
+      return;
+    }
+    if (!enabled) {
+      // A flythrough or walk owns the camera; ease back to the framing from
+      // wherever it leaves the camera once orbiting resumes.
+      finishTween();
+      stale.current = true;
+      return;
+    }
+    if (!stale.current && sameFraming(previous, framing)) return;
+    stale.current = false;
+    framed.current = framing;
+
+    const toTarget = new THREE.Vector3(...framing.target);
+    const from = new THREE.Spherical().setFromVector3(
+      camera.position.clone().sub(orbit.target),
+    );
+    let to: THREE.Spherical;
+    if (userMoved.current) {
+      to = from.clone();
+      to.radius = clamp(
+        (from.radius * framing.distance) / previous.distance,
+        framing.minDistance,
+        framing.maxDistance,
+      );
+    } else {
+      to = new THREE.Spherical().setFromVector3(
+        new THREE.Vector3(...framing.position).sub(toTarget),
+      );
+    }
+    const next: FramingTween = {
+      fromTarget: orbit.target.clone(),
+      toTarget,
+      from,
+      to,
+      elapsed: 0,
+    };
+    if (reducedMotion) {
+      applyTween(next, 1);
+      finishTween();
+      orbit.update();
+      return;
+    }
+    // Open the zoom limits while easing so the controls never clamp mid-way.
+    orbit.minDistance = 0;
+    orbit.maxDistance = Infinity;
+    tween.current = next;
+    // applyTween and finishTween only touch refs; they need not be deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camera, enabled, framing, reducedMotion]);
+
+  useFrame((_, delta) => {
+    const active = tween.current;
+    if (!active || !enabled) return;
+    active.elapsed += Math.min(delta, 0.1);
+    const progress = clamp01(active.elapsed / REFRAME_SECONDS);
+    const eased =
+      progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+    applyTween(active, eased);
+    if (progress >= 1) finishTween();
+  });
+
+  return (
+    <OrbitControls
+      ref={controls}
+      enabled={enabled}
+      enableDamping
+      dampingFactor={0.055}
+      enablePan={false}
+      maxPolarAngle={Math.PI * 0.47}
+      minPolarAngle={Math.PI * 0.19}
+      rotateSpeed={0.55}
+      zoomSpeed={0.65}
+      onStart={() => {
+        userMoved.current = true;
+        if (tween.current) finishTween();
+      }}
+    />
   );
 }
 
@@ -954,12 +1159,12 @@ function StarField({ count, seed }: { count: number; seed: number }) {
 
 function GardenWalkthroughControls({
   input,
-  islandRadius,
+  layout,
   onExit,
   surfaceSampler,
 }: {
   input: GardenWalkInput;
-  islandRadius: number;
+  layout: GardenLayout;
   onExit?: () => void;
   surfaceSampler: PhotorealIslandSurfaceSampler;
 }) {
@@ -984,6 +1189,24 @@ function GardenWalkthroughControls({
   const forward = useMemo(() => new THREE.Vector3(), []);
   const right = useMemo(() => new THREE.Vector3(), []);
   const movement = useMemo(() => new THREE.Vector3(), []);
+  // Trunks to walk around: every year tree and the great tree.
+  const obstacles = useMemo(
+    () => [
+      ...layout.yearTrees.map((tree) => ({
+        x: tree.x,
+        z: tree.z,
+        radius: 0.45 * tree.scale,
+      })),
+      {
+        x: layout.greatTree.x,
+        z: layout.greatTree.z,
+        radius: 1.0 * layout.greatTree.scale,
+      },
+    ],
+    [layout.greatTree, layout.yearTrees],
+  );
+  const walkRadius = layout.islandRadius - 0.7;
+  const pond = layout.pond;
 
   useEffect(() => {
     inputRef.current = input;
@@ -1235,13 +1458,25 @@ function GardenWalkthroughControls({
       const currentGround =
         (surfaceSampler(camera.position.x, camera.position.z) ?? 0) +
         ISLAND_SURFACE_OFFSET;
+      const fromX = camera.position.x;
+      const fromZ = camera.position.z;
+      // A step into a trunk is blocked; a step that leaves one never is, so
+      // the walker can't get stuck.
+      const hitsTrunk = (x: number, z: number) =>
+        obstacles.some((obstacle) => {
+          const distance = Math.hypot(x - obstacle.x, z - obstacle.z);
+          return (
+            distance < obstacle.radius &&
+            distance < Math.hypot(fromX - obstacle.x, fromZ - obstacle.z)
+          );
+        });
       const isWalkable = (x: number, z: number) => {
         const sampledHeight = surfaceSampler(x, z);
         return (
           sampledHeight !== null &&
-          Math.hypot(x, z) <= islandRadius - 0.72 &&
-          isOutsideMeadowPond(x, z, WALK_POND, 1.28) &&
-          Math.hypot(x - 2.62, z - 0.48) > 1.24 &&
+          Math.hypot(x, z) <= walkRadius &&
+          isOutsideMeadowPond(x, z, pond, 1.28) &&
+          !hitsTrunk(x, z) &&
           Math.abs(sampledHeight + ISLAND_SURFACE_OFFSET - currentGround) < 0.46
         );
       };
@@ -1273,37 +1508,68 @@ function GardenWalkthroughControls({
   return null;
 }
 
+/** The flythrough loop for a radius-11.5 island; it scales with the island. */
+const FLYTHROUGH_PATH: ReadonlyArray<[number, number, number]> = [
+  [14.8, 12.8, 17.2],
+  [7.6, 8.5, 14.2],
+  [-7.2, 7.4, 12.8],
+  [-14.3, 7.8, -2.8],
+  [-5.3, 7.2, -13.6],
+  [9.8, 8, -10.8],
+  [14.8, 12.8, 17.2],
+];
+const FLYTHROUGH_RADIUS = 11.5;
+const FLYTHROUGH_START_AZIMUTH = Math.atan2(17.2, 14.8);
+/** Height on the cliff the opening shot looks at: the middle of the fall. */
+const WATERFALL_LOOK_Y = -1.6;
+
 function CameraFlythrough({
+  framing,
+  islandRadius,
   reducedMotion,
+  waterfall,
   onComplete,
 }: {
+  framing: CameraFraming;
+  islandRadius: number;
   reducedMotion: boolean;
+  waterfall: { x: number; z: number };
   onComplete?: () => void;
 }) {
   const camera = useThree((state) => state.camera);
   const elapsed = useRef(0);
   const completed = useRef(false);
+  const lookReady = useRef(false);
   const onCompleteRef = useRef(onComplete);
-  const path = useMemo(
-    () =>
-      new THREE.CatmullRomCurve3(
-        [
-          new THREE.Vector3(14.8, 12.8, 17.2),
-          new THREE.Vector3(7.6, 8.5, 14.2),
-          new THREE.Vector3(-7.2, 7.4, 12.8),
-          new THREE.Vector3(-14.3, 7.8, -2.8),
-          new THREE.Vector3(-5.3, 7.2, -13.6),
-          new THREE.Vector3(9.8, 8, -10.8),
-          new THREE.Vector3(14.8, 12.8, 17.2),
-        ],
-        false,
-        "catmullrom",
-        0.42,
-      ),
-    [],
-  );
+  // The loop turns to start (and end) on the orbit framing's side of the
+  // island, which faces the waterfall, and scales with the island. Orbiting
+  // eases back to the framing once the flight ends.
+  const turn = framing.azimuth - FLYTHROUGH_START_AZIMUTH;
+  const path = useMemo(() => {
+    const scale = islandRadius / FLYTHROUGH_RADIUS;
+    const cos = Math.cos(turn);
+    const sin = Math.sin(turn);
+    const points = FLYTHROUGH_PATH.map(
+      ([x, y, z]) =>
+        new THREE.Vector3(
+          (x * cos - z * sin) * scale,
+          y * scale,
+          (x * sin + z * cos) * scale,
+        ),
+    );
+    return new THREE.CatmullRomCurve3(points, false, "catmullrom", 0.42);
+  }, [islandRadius, turn]);
   const position = useMemo(() => new THREE.Vector3(), []);
   const target = useMemo(() => new THREE.Vector3(), []);
+  const look = useMemo(() => new THREE.Vector3(), []);
+  const waterfallPoint = useMemo(
+    () => new THREE.Vector3(waterfall.x, WATERFALL_LOOK_Y, waterfall.z),
+    [waterfall.x, waterfall.z],
+  );
+  const finalTarget = useMemo(
+    () => new THREE.Vector3(...framing.target),
+    [framing.target],
+  );
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -1320,23 +1586,36 @@ function CameraFlythrough({
 
   useFrame((state, delta) => {
     if (reducedMotion || completed.current) return;
+    if (!lookReady.current) {
+      // Start from wherever the camera is looking, then pan to the fall.
+      lookReady.current = true;
+      camera.getWorldDirection(look);
+      look
+        .multiplyScalar(camera.position.distanceTo(finalTarget))
+        .add(camera.position);
+    }
     elapsed.current += delta;
     const progress = clamp01(elapsed.current / 16);
     const eased = progress * progress * (3 - 2 * progress);
     path.getPointAt(eased, position);
     camera.position.lerp(position, 1 - Math.exp(-delta * 5.5));
+    const swirlX = Math.sin(eased * Math.PI * 2) * 1.3;
+    const swirlZ = Math.cos(eased * Math.PI * 2) * 0.85;
     target.set(
-      Math.sin(eased * Math.PI * 2) * 1.3,
+      swirlX * Math.cos(turn) - swirlZ * Math.sin(turn),
       1 + Math.sin(eased * Math.PI) * 0.58,
-      Math.cos(eased * Math.PI * 2) * 0.85,
+      swirlX * Math.sin(turn) + swirlZ * Math.cos(turn),
     );
-    camera.lookAt(target);
+    // Open on the waterfall, settle on the orbit target at the end.
+    target.lerp(waterfallPoint, 1 - THREE.MathUtils.smoothstep(eased, 0.06, 0.24));
+    target.lerp(finalTarget, THREE.MathUtils.smoothstep(eased, 0.8, 1));
+    look.lerp(target, 1 - Math.exp(-delta * 3.5));
+    camera.lookAt(look);
 
     if (progress >= 1) {
       completed.current = true;
-      path.getPointAt(1, position);
-      camera.position.copy(position);
-      camera.lookAt(target);
+      camera.position.copy(path.getPointAt(1, position));
+      camera.lookAt(finalTarget);
       onCompleteRef.current?.();
     }
   });

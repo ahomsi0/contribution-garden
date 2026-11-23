@@ -17,6 +17,11 @@ export interface SkyAndLightsProps {
   weather: GardenWeather;
   reducedMotion: boolean;
   seed: number;
+  /**
+   * Stretches the fog range with the default camera distance, so an island
+   * framed from further away is no hazier than one framed close up.
+   */
+  fogScale?: number;
 }
 
 const DOME_RADIUS = 54;
@@ -75,6 +80,7 @@ export function SkyAndLights({
   weather,
   reducedMotion,
   seed,
+  fogScale = 1,
 }: SkyAndLightsProps) {
   const fog = fogRange(weather, timeOfDay);
   const skyColor = useMemo(
@@ -98,7 +104,10 @@ export function SkyAndLights({
   return (
     <>
       <color attach="background" args={[skyColor]} />
-      <fog attach="fog" args={[fogColor, fog.near, fog.far]} />
+      <fog
+        attach="fog"
+        args={[fogColor, fog.near * fogScale, fog.far * fogScale]}
+      />
       <SkyDome
         fog={fogColor}
         horizon={palette.horizon}
