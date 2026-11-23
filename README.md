@@ -71,10 +71,67 @@ one aggregate activity count per day. The garden preserves that information and
 labels commit, merge-request, and issue category totals as unavailable instead
 of estimating them.
 
+## Country leaderboards
+
+Every day a GitHub Action ranks the most active GitHub users in each configured
+country by lifetime public contributions (top 256 per country). The landing page
+is a country directory; each country board draws every person as "year beds",
+one raised bed per year. Clicking a person opens their 3D garden at
+`/u/<login>`.
+
+### One-time setup
+
+1. Create a [Vercel Blob](https://vercel.com/docs/vercel-blob) store and make it
+   public.
+2. Add these repository secrets:
+   - `RANKINGS_GITHUB_TOKEN`: a GitHub personal access token with no scopes. The
+     built-in Actions token is limited to 1,000 requests an hour.
+   - `BLOB_READ_WRITE_TOKEN`: the Blob store's read/write token.
+3. Add the repository variable `RANKINGS_BASE_URL`, the Blob store's public base
+   URL (for example `https://<store-id>.public.blob.vercel-storage.com`).
+4. Add `RANKINGS_BASE_URL` to the Vercel project's environment variables too.
+   Without it every board shows as "being planted".
+5. Run the "Build rankings" workflow manually once.
+
+The first full build of all countries may take two daily runs because of
+GitHub's hourly rate limit. The job stops starting new countries after 290
+minutes. Countries are published as they finish, and the stalest are rebuilt
+first.
+
+### Running locally
+
+Dry run without uploading anything:
+
+```bash
+RANKINGS_GITHUB_TOKEN=... npm run rankings:build -- --country netherlands --limit 20 --out ./tmp/rankings
+```
+
+`--limit` is only allowed together with `--out`, so a partial board is never
+published. To view the output, serve it and point the dev server at it:
+
+```bash
+python3 -m http.server 4010 --directory tmp/rankings
+```
+
+The local dev server runs inside Cloudflare's workerd runtime, which only sees
+variables from `.env.local`. Either put `RANKINGS_BASE_URL=http://localhost:4010`
+in `.env.local`, or start dev with:
+
+```bash
+CLOUDFLARE_INCLUDE_PROCESS_ENV=true RANKINGS_BASE_URL=http://localhost:4010 npm run dev
+```
+
+### Adding a country
+
+Edit `lib/rankings/countries.ts`. `names` are country-level terms; they are also
+used to exclude people whose location names another configured country. `cities`
+are only searched.
+
 ## Experience
 
 - Procedural 3D terrain, pond, paths, vegetation, trees, flowers, and wildlife
-- GitHub and GitLab username search with shareable local URLs
+- GitHub and GitLab username search, with shareable garden URLs at `/u/<login>`
+- Country leaderboards on the landing page, with every ranked person drawn as year beds
 - Multi-year growth timeline with playback controls
 - Spring, summer, autumn, and winter ecosystems
 - Sun, rain, wind, fog, and snow weather systems

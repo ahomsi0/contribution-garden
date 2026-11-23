@@ -11,13 +11,21 @@ import {
   resolveGitHubSession,
   serializeClearGitHubSessionCookie,
 } from "@/lib/github-auth";
+import {
+  GitHubRequestError,
+  chunk,
+  fetchGraphQL,
+  mapWithConcurrency,
+  type GitHubAuthorization,
+} from "@/lib/github/graphql";
+import { contributionHistoryQuery } from "@/lib/github/history-query";
 import { createMockGitHubData } from "@/lib/mock-github";
+import { createInflight } from "@/lib/inflight";
 import { logger } from "@/lib/logger";
 import { checkRateLimit, clientIpFromRequest } from "@/lib/rate-limit";
 
-const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
-const REQUEST_TIMEOUT_MS = 15_000;
-const MAX_REPOSITORY_PAGES = 10;
+// Each page is ~3.5 s because of per-repo languages; repos are sorted by stars, so the 300 most-starred cover star and language totals for nearly everyone.
+const MAX_REPOSITORY_PAGES = 3;
 const HISTORY_CHUNK_SIZE = 4;
 const HISTORY_CONCURRENCY = 3;
 const FALLBACK_COLOR = "#7a8b78";
@@ -143,55 +151,6 @@ const REPOSITORY_PAGE_QUERY = /* GraphQL */ `
   }
 `;
 
-const HISTORY_FIELDS = /* GraphQL */ `
-  totalCommitContributions
-  totalIssueContributions
-  totalPullRequestContributions
-  totalPullRequestReviewContributions
-  restrictedContributionsCount
-  contributionCalendar {
-    totalContributions
-    weeks {
-      contributionDays {
-        date
-        weekday
-        contributionCount
-        contributionLevel
-        color
-      }
-    }
-  }
-  commitContributionsByRepository(maxRepositories: 25) {
-    repository { nameWithOwner isPrivate }
-    contributions(first: 100) {
-      nodes { occurredAt commitCount }
-    }
-  }
-`;
-
-interface GraphQLResponse<T> {
-  data?: T;
-  errors?: Array<{ message?: string; type?: string }>;
-}
-
-class GitHubRequestError extends Error {
-  constructor(
-    message: string,
-    readonly status: 401 | 404 | 429 | 502,
-  ) {
-    super(message);
-    this.name = "GitHubRequestError";
-  }
-}
-
-type GitHubAuthorizationKind = "oauth-app" | "server-token" | "user-session";
-
-interface GitHubAuthorization {
-  header: string;
-  kind: GitHubAuthorizationKind;
-  cacheScope: string;
-}
-
 interface GitHubServerAuthorization {
   credential: GitHubAuthorization | null;
   incomplete: boolean;
@@ -211,7 +170,7 @@ interface PublicGardenFailure {
 type PublicGardenCacheStatus = "hit" | "miss" | "stale";
 
 const publicGardenCache = new Map<string, PublicGardenCacheEntry>();
-const publicGardenLoads = new Map<string, Promise<GitHubGardenData>>();
+const publicGardenLoads = createInflight<GitHubGardenData>(60_000);
 const publicGardenFailures = new Map<string, PublicGardenFailure>();
 
 interface RawLanguageEdge {
@@ -285,7 +244,7 @@ interface RawContributionCollection {
     totalContributions: number;
     weeks: Array<{ contributionDays: RawContributionDay[] }>;
   };
-  commitContributionsByRepository: Array<{
+  commitContributionsByRepository?: Array<{
     repository: { nameWithOwner: string; isPrivate: boolean };
     contributions: {
       nodes: Array<{ occurredAt: string; commitCount: number } | null>;
@@ -325,139 +284,6 @@ function githubServerAuthorization(): GitHubServerAuthorization {
       : null,
     incomplete: false,
   };
-}
-
-async function fetchGraphQL<T>(
-  authorization: GitHubAuthorization,
-  query: string,
-  variables: Record<string, unknown>,
-): Promise<T> {
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), REQUEST_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(GITHUB_GRAPHQL_URL, {
-      method: "POST",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: authorization.header,
-        "Content-Type": "application/json",
-        "User-Agent": "Contribution-Garden",
-      },
-      body: JSON.stringify({ query, variables }),
-      signal: abortController.signal,
-    });
-
-    if (!response.ok) {
-      // GitHub reports exhausted rate limits as 403 *or* 429; disambiguate via
-      // the rate-limit headers so credential-scope problems are not misread as
-      // quota exhaustion.
-      const rateLimited =
-        response.status === 429 ||
-        (response.status === 403 &&
-          response.headers.get("x-ratelimit-remaining") === "0");
-      const status =
-        response.status === 401 ? 401 : rateLimited ? 429 : 502;
-      logger.warn("github_graphql_http_error", {
-        upstreamStatus: response.status,
-        mappedStatus: status,
-        kind: authorization.kind,
-      });
-      throw new GitHubRequestError(
-        `GitHub GraphQL request failed with status ${response.status}.`,
-        status,
-      );
-    }
-
-    const payload = (await response.json()) as GraphQLResponse<T>;
-    if (payload.errors?.length) {
-      const firstError = payload.errors[0];
-      const message = firstError?.message ?? "GitHub returned a GraphQL error.";
-      const status =
-        /bad credentials|requires authentication|authentication token/i.test(message)
-          ? 401
-          : firstError?.type === "NOT_FOUND"
-            ? 404
-            : firstError?.type === "RATE_LIMITED" || /rate limit/i.test(message)
-              ? 429
-              : 502;
-      logger.warn("github_graphql_errors_payload", {
-        mappedStatus: status,
-        type: firstError?.type ?? null,
-        kind: authorization.kind,
-      });
-      throw new GitHubRequestError(message, status);
-    }
-    if (!payload.data) {
-      throw new GitHubRequestError("GitHub returned no data.", 502);
-    }
-
-    return payload.data;
-  } catch (error) {
-    if (error instanceof GitHubRequestError) throw error;
-    if (error instanceof Error && error.name === "AbortError") {
-      logger.warn("github_graphql_timeout", { kind: authorization.kind });
-      throw new GitHubRequestError("The GitHub request timed out.", 502);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function mapWithConcurrency<T, R>(
-  items: readonly T[],
-  limit: number,
-  task: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from(
-    { length: Math.max(1, Math.min(limit, items.length)) },
-    async () => {
-      while (cursor < items.length) {
-        const index = cursor;
-        cursor += 1;
-        results[index] = await task(items[index], index);
-      }
-    },
-  );
-  await Promise.all(workers);
-  return results;
-}
-
-function chunk<T>(values: readonly T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size));
-  }
-  return chunks;
-}
-
-function contributionHistoryQuery(years: readonly number[], now: Date): string {
-  const currentYear = now.getUTCFullYear();
-  const selections = years
-    .map((year) => {
-      const from = `${year}-01-01T00:00:00.000Z`;
-      const to =
-        year === currentYear
-          ? now.toISOString()
-          : new Date(Date.UTC(year + 1, 0, 1) - 1_000).toISOString();
-      return `
-        y${year}: contributionsCollection(from: "${from}", to: "${to}") {
-          ${HISTORY_FIELDS}
-        }
-      `;
-    })
-    .join("\n");
-
-  return `
-    query ContributionGardenHistory($login: String!) {
-      user(login: $login) {
-        ${selections}
-      }
-    }
-  `;
 }
 
 async function fetchContributionHistory(
@@ -602,7 +428,7 @@ function normalizeCalendar(
   const repositoriesByDate = new Map<string, Set<string>>();
 
   for (const collection of collections.values()) {
-    for (const repositoryContributions of collection.commitContributionsByRepository) {
+    for (const repositoryContributions of collection.commitContributionsByRepository ?? []) {
       if (repositoryContributions.repository.isPrivate) continue;
       for (const contribution of repositoryContributions.contributions.nodes) {
         if (!contribution || contribution.commitCount <= 0) continue;
@@ -732,7 +558,7 @@ async function loadGitHubGarden(
     source: "github",
     fetchedAt: now.toISOString(),
     notice: repositoryResult.truncated
-      ? `Star and language totals cover the first ${MAX_REPOSITORY_PAGES * 100} public repositories.`
+      ? `Star and language totals cover the ${MAX_REPOSITORY_PAGES * 100} most-starred public repositories.`
       : undefined,
   };
 }
@@ -768,56 +594,50 @@ async function loadPublicGitHubGarden(
     return { data: cached.data, cacheStatus: "hit" };
   }
 
-  let pending = publicGardenLoads.get(cacheKey);
-
-  if (!pending) {
-    // Negative-cache window: do not hammer GitHub again immediately after a
-    // failure. Prefer serving a stale copy when one exists.
-    const failure = publicGardenFailures.get(cacheKey);
-    if (failure && failure.retryAt > Date.now()) {
-      if (cached && cached.staleUntil > Date.now()) {
-        publicGardenCache.delete(cacheKey);
-        publicGardenCache.set(cacheKey, cached);
-        return { data: staleCopy(cached), cacheStatus: "stale" };
-      }
-      throw failure.error;
+  // Negative-cache window: do not hammer GitHub again immediately after a
+  // failure. Prefer serving a stale copy when one exists. Skipped while a
+  // load is already in flight so concurrent callers share it.
+  const failure = publicGardenFailures.get(cacheKey);
+  if (failure && failure.retryAt > Date.now()) {
+    if (cached && cached.staleUntil > Date.now()) {
+      publicGardenCache.delete(cacheKey);
+      publicGardenCache.set(cacheKey, cached);
+      return { data: staleCopy(cached), cacheStatus: "stale" };
     }
-
-    pending = loadGitHubGarden(username, authorization).then(
-      (data) => {
-        const cachedAt = Date.now();
-        publicGardenCache.set(cacheKey, {
-          data,
-          freshUntil: cachedAt + PUBLIC_GARDEN_CACHE_TTL_MS,
-          staleUntil: cachedAt + PUBLIC_GARDEN_STALE_TTL_MS,
-        });
-        publicGardenFailures.delete(cacheKey);
-        prunePublicGardenCache();
-        return data;
-      },
-      (error: unknown) => {
-        const requestError =
-          error instanceof GitHubRequestError
-            ? error
-            : new GitHubRequestError(
-                "The garden could not be loaded.",
-                502,
-              );
-        // Back off briefly for every failure shape — outages, rate limits,
-        // and unknown users alike — so bursts of traffic during a GitHub
-        // incident cannot amplify into sustained upstream load.
-        publicGardenFailures.set(cacheKey, {
-          error: requestError,
-          retryAt: Date.now() + NEGATIVE_CACHE_TTL_MS,
-        });
-        throw requestError;
-      },
-    );
-    publicGardenLoads.set(cacheKey, pending);
+    throw failure.error;
   }
 
   try {
-    return { data: await pending, cacheStatus: "miss" };
+    const data = await publicGardenLoads.run(cacheKey, () =>
+      loadGitHubGarden(username, authorization).then(
+        (loaded) => {
+          const cachedAt = Date.now();
+          publicGardenCache.set(cacheKey, {
+            data: loaded,
+            freshUntil: cachedAt + PUBLIC_GARDEN_CACHE_TTL_MS,
+            staleUntil: cachedAt + PUBLIC_GARDEN_STALE_TTL_MS,
+          });
+          publicGardenFailures.delete(cacheKey);
+          prunePublicGardenCache();
+          return loaded;
+        },
+        (error: unknown) => {
+          const requestError =
+            error instanceof GitHubRequestError
+              ? error
+              : new GitHubRequestError("The garden could not be loaded.", 502);
+          // Back off briefly for every failure shape — outages, rate limits,
+          // and unknown users alike — so bursts of traffic during a GitHub
+          // incident cannot amplify into sustained upstream load.
+          publicGardenFailures.set(cacheKey, {
+            error: requestError,
+            retryAt: Date.now() + NEGATIVE_CACHE_TTL_MS,
+          });
+          throw requestError;
+        },
+      ),
+    );
+    return { data, cacheStatus: "miss" };
   } catch (error) {
     if (cached && cached.staleUntil > Date.now()) {
       // Re-insert so a frequently requested entry survives LRU eviction even
@@ -827,10 +647,6 @@ async function loadPublicGitHubGarden(
       return { data: staleCopy(cached), cacheStatus: "stale" };
     }
     throw error;
-  } finally {
-    if (publicGardenLoads.get(cacheKey) === pending) {
-      publicGardenLoads.delete(cacheKey);
-    }
   }
 }
 

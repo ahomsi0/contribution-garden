@@ -41,7 +41,6 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Contribution Garden" }],
   creator: "Contribution Garden",
-  alternates: { canonical: "/" },
   robots: {
     index: true,
     follow: true,

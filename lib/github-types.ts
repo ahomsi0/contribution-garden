@@ -235,3 +235,14 @@ export function deriveCalendarMetrics(
     mostActiveDay,
   };
 }
+
+/** Lifetime total across the whole calendar (matches the leaderboard score). */
+export function lifetimeContributions(
+  calendar: ReadonlyArray<{ count: number }>,
+): number {
+  let total = 0;
+  for (const day of calendar) {
+    if (Number.isFinite(day.count) && day.count > 0) total += day.count;
+  }
+  return total;
+}

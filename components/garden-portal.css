@@ -14,12 +14,6 @@
   background: var(--portal-pine);
 }
 
-.garden-portal__world {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-}
-
 .garden-portal__hero {
   position: absolute;
   z-index: 30;
@@ -27,11 +21,6 @@
   overflow: hidden;
   background: #4b5c55;
   transition: opacity 820ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.garden-portal.is-garden .garden-portal__hero {
-  opacity: 0;
-  pointer-events: none;
 }
 
 .garden-portal__image,
@@ -45,7 +34,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: 54% center;
+  object-position: 50% center;
   animation: garden-portal-breathe 18s ease-in-out infinite alternate;
 }
 
@@ -115,10 +104,6 @@
   transition:
     opacity 320ms ease,
     transform 320ms ease;
-}
-
-.garden-portal.is-loading .garden-portal__content {
-  transform: translateY(calc(-45% - 7px));
 }
 
 .garden-portal__eyebrow {
@@ -266,109 +251,12 @@
   color: #f0c19d;
 }
 
-.garden-portal__legend {
-  position: absolute;
-  z-index: 2;
-  right: clamp(24px, 4.2vw, 72px);
-  bottom: 31px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(110px, 1fr));
-  gap: 28px;
-}
-
-.garden-portal__legend div {
-  min-width: 112px;
-  border-top: 1px solid rgba(243, 240, 231, 0.24);
-  padding-top: 9px;
-}
-
-.garden-portal__legend span,
-.garden-portal__legend strong {
-  display: block;
-}
-
-.garden-portal__legend span {
-  color: rgba(243, 240, 231, 0.48);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 8px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-.garden-portal__legend strong {
-  margin-top: 4px;
-  color: rgba(243, 240, 231, 0.88);
-  font-family: var(--font-newsreader), "Iowan Old Style", serif;
-  font-size: 15px;
-  font-weight: 450;
-}
-
-.garden-portal__loading-line {
-  position: absolute;
-  z-index: 3;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 2px;
-  overflow: hidden;
-  background: rgba(243, 240, 231, 0.08);
-}
-
-.garden-portal__loading-line span {
-  display: block;
-  width: 34%;
-  height: 100%;
-  background: var(--portal-gold);
-  animation: garden-portal-load 1.45s ease-in-out infinite;
-}
-
-.garden-portal__overview {
-  position: absolute;
-  z-index: 24;
-  bottom: 23px;
-  left: 21px;
-  display: flex;
-  height: 34px;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid rgba(243, 240, 231, 0.2);
-  border-radius: 18px;
-  padding: 0 13px;
-  color: rgba(243, 240, 231, 0.8);
-  background: rgba(13, 21, 17, 0.78);
-  cursor: pointer;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  transition:
-    color 180ms ease,
-    background 180ms ease;
-}
-
-.garden-portal__overview:hover {
-  color: var(--portal-bone);
-  background: rgba(13, 21, 17, 0.96);
-}
-
 @keyframes garden-portal-breathe {
   from {
     transform: scale(1);
   }
   to {
     transform: scale(1.025);
-  }
-}
-
-@keyframes garden-portal-load {
-  0% {
-    transform: translateX(-105%);
-  }
-  50% {
-    transform: translateX(105%);
-  }
-  100% {
-    transform: translateX(305%);
   }
 }
 
@@ -380,11 +268,6 @@
   .garden-portal__content {
     left: clamp(24px, 5vw, 48px);
     width: min(560px, calc(100vw - 48px));
-  }
-
-  .garden-portal__legend {
-    right: 24px;
-    gap: 16px;
   }
 }
 
@@ -438,10 +321,6 @@
     transform: none;
   }
 
-  .garden-portal.is-loading .garden-portal__content {
-    transform: translateY(-5px);
-  }
-
   .garden-portal__eyebrow {
     margin-bottom: 15px;
     font-size: 10px;
@@ -483,28 +362,6 @@
     width: 100%;
     min-width: 0;
   }
-
-  .garden-portal__legend {
-    right: 20px;
-    bottom: 20px;
-    left: 20px;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 10px;
-  }
-
-  .garden-portal__legend div {
-    min-width: 0;
-  }
-
-  .garden-portal__legend strong {
-    font-size: 12px;
-  }
-
-  .garden-portal__overview {
-    top: 76px;
-    bottom: auto;
-    left: 14px;
-  }
 }
 
 @media (max-height: 760px) and (min-width: 721px) {
@@ -538,15 +395,10 @@
   .garden-portal__entry {
     margin-top: 18px;
   }
-
-  .garden-portal__legend {
-    display: none;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .garden-portal__image img,
-  .garden-portal__loading-line span {
+  .garden-portal__image img {
     animation: none;
   }
 
@@ -565,31 +417,13 @@
   --block-sun: #e0b96e;
 }
 
-.garden-portal__veil {
-  background:
-    linear-gradient(
-      90deg,
-      rgba(8, 14, 10, 0.94) 0 30%,
-      rgba(8, 14, 10, 0.76) 30% 43%,
-      rgba(8, 14, 10, 0.28) 43% 62%,
-      rgba(8, 14, 10, 0.08) 62% 100%
-    ),
-    linear-gradient(
-      180deg,
-      rgba(8, 14, 10, 0.34) 0 16%,
-      transparent 16% 70%,
-      rgba(8, 14, 10, 0.72) 70% 100%
-    );
-}
-
 .garden-portal__header {
   border-bottom: 2px solid var(--block-edge);
 }
 
 .garden-portal__eyebrow span,
 .garden-portal__username,
-.garden-portal__entry-row > button,
-.garden-portal__overview {
+.garden-portal__entry-row > button {
   border-radius: 0;
 }
 
@@ -650,73 +484,7 @@
   box-shadow: none;
 }
 
-.garden-portal__legend {
-  gap: 12px;
-}
-
-.garden-portal__legend div {
-  border-top: 3px solid var(--block-edge);
-  padding: 10px 12px;
-  background: rgba(11, 19, 14, 0.62);
-  box-shadow: 4px 4px 0 rgba(3, 8, 5, 0.5);
-}
-
-.garden-portal__legend div:nth-child(1) {
-  border-color: #d9c35f;
-}
-
-.garden-portal__legend div:nth-child(2) {
-  border-color: #8fbd75;
-}
-
-.garden-portal__legend div:nth-child(3) {
-  border-color: #b47b57;
-}
-
-.garden-portal__legend span {
-  font-size: 10px;
-}
-
-.garden-portal__legend strong {
-  font-family: var(--font-geist-sans), sans-serif;
-  font-size: 14px;
-  font-weight: 650;
-}
-
-.garden-portal__loading-line {
-  height: 4px;
-}
-
-.garden-portal__loading-line span {
-  background: repeating-linear-gradient(
-    90deg,
-    var(--block-sun) 0 10px,
-    transparent 10px 14px
-  );
-  animation-timing-function: steps(8, end);
-}
-
-.garden-portal__overview {
-  min-height: 40px;
-  border-width: 2px;
-  box-shadow: 3px 3px 0 var(--block-shadow);
-}
-
 @media (max-width: 720px) {
-  .garden-portal__veil {
-    background:
-      linear-gradient(
-        180deg,
-        rgba(8, 14, 10, 0.34) 0 20%,
-        rgba(8, 14, 10, 0.08) 20% 48%,
-        rgba(8, 14, 10, 0.9) 48% 100%
-      ),
-      linear-gradient(90deg, rgba(8, 14, 10, 0.26), transparent 72%);
-  }
-
-  .garden-portal__legend {
-    display: none;
-  }
 
   .garden-portal__username,
   .garden-portal__entry-row > button {
@@ -727,4 +495,9 @@
     font-size: clamp(42px, 12vw, 58px);
     text-shadow: 2px 2px 0 rgba(4, 9, 6, 0.58);
   }
+}
+
+a.garden-portal__edition {
+  color: inherit;
+  text-decoration: none;
 }

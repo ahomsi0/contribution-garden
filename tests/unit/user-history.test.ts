@@ -1,0 +1,172 @@
+import assert from "node:assert/strict";
+import test, { afterEach } from "node:test";
+import { GitHubRequestError } from "@/lib/github/graphql";
+import { fetchUserHistory } from "@/lib/rankings/github-source";
+
+const originalFetch = globalThis.fetch;
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+function calendar(year: number, count: number) {
+  return {
+    contributionCalendar: {
+      weeks: [{ contributionDays: [{ date: `${year}-03-04`, contributionCount: count }] }],
+    },
+  };
+}
+
+function stubGraphQL(contributionYears: number[], remaining = 4_000) {
+  const queries: string[] = [];
+  globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+    const query = String(JSON.parse(String(init?.body)).query);
+    queries.push(query);
+    const years = [...query.matchAll(/y(\d{4}): contributionsCollection/g)].map((m) => Number(m[1]));
+    return Response.json({
+      data: {
+        rateLimit: { remaining, resetAt: "2026-11-23T11:00:00Z" },
+        user: {
+          databaseId: 42,
+          login: "Mia",
+          name: "Mia S",
+          avatarUrl: "https://a/42",
+          location: "Berlin, Germany",
+          contributionsCollection: { contributionYears },
+          ...Object.fromEntries(years.map((y) => [`y${y}`, calendar(y, y - 2000)])),
+        },
+      },
+    });
+  }) as typeof fetch;
+  return queries;
+}
+
+const now = new Date("2026-11-23T10:00:00.000Z");
+
+test("new user: fetches the latest two years, then the rest in chunks of 4", async () => {
+  const queries = stubGraphQL([2026, 2025, 2024, 2015, 2010]);
+  const result = await fetchUserHistory("mia", null, now, { token: "t", sleep: async () => {} });
+  assert.ok(result);
+  assert.equal(result.id, 42);
+  assert.equal(result.login, "Mia");
+  assert.equal(result.location, "Berlin, Germany");
+  assert.deepEqual(result.years.map((y) => y.year), [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]);
+  assert.equal(result.years.at(-1)?.months[2], 26);
+  assert.equal(queries.length, 5);
+});
+
+test("known user: only the requested years", async () => {
+  const queries = stubGraphQL([2026, 2025]);
+  const result = await fetchUserHistory("mia", 2026, now, { token: "t", sleep: async () => {} });
+  assert.deepEqual(result?.years.map((y) => y.year), [2026]);
+  assert.equal(queries.length, 1);
+});
+
+test("returns null for a user that no longer exists", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({ errors: [{ type: "NOT_FOUND", message: "Could not resolve to a User" }] })) as typeof fetch;
+  assert.equal(await fetchUserHistory("gone", null, now, { token: "t", sleep: async () => {} }), null);
+});
+
+test("sleeps until reset when the rate limit runs low", async () => {
+  stubGraphQL([2026], 150);
+  const waits: number[] = [];
+  await fetchUserHistory("mia", 2026, now, {
+    token: "t",
+    sleep: async (ms) => {
+      waits.push(ms);
+    },
+    now: () => new Date("2026-11-23T10:59:00Z"),
+  });
+  assert.deepEqual(waits, [65_000]);
+});
+
+function okPayload(overrides: Record<string, unknown> = {}, remaining = 4_000) {
+  return {
+    data: {
+      rateLimit: { remaining, resetAt: "2026-11-23T11:00:00Z" },
+      user: {
+        databaseId: 42,
+        login: "Mia",
+        name: "Mia S",
+        avatarUrl: "https://a/42",
+        location: null,
+        contributionsCollection: { contributionYears: [2026] },
+        y2026: calendar(2026, 5),
+        ...overrides,
+      },
+    },
+  };
+}
+
+test("ignores padding days from adjacent years", async () => {
+  globalThis.fetch = (async () =>
+    Response.json(
+      okPayload({
+        contributionsCollection: { contributionYears: [2026, 2025] },
+        y2025: {
+          contributionCalendar: {
+            weeks: [
+              {
+                contributionDays: [
+                  { date: "2025-12-30", contributionCount: 3 },
+                  { date: "2026-01-02", contributionCount: 999 },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    )) as typeof fetch;
+  const result = await fetchUserHistory("mia", null, now, { token: "t", sleep: async () => {} });
+  assert.ok(result);
+  assert.equal(result.years.find((y) => y.year === 2026)?.months[0], 0);
+  assert.equal(result.years.find((y) => y.year === 2025)?.months[11], 3);
+});
+
+test("retries a 502 after five seconds", async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) return new Response("bad gateway", { status: 502 });
+    return Response.json(okPayload());
+  }) as typeof fetch;
+  const waits: number[] = [];
+  const result = await fetchUserHistory("mia", 2026, now, {
+    token: "t",
+    sleep: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  assert.deepEqual(waits, [5_000]);
+  assert.ok(result);
+});
+
+test("does not retry a 401", async () => {
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response("{}", { status: 401 });
+  }) as typeof fetch;
+  await assert.rejects(
+    fetchUserHistory("mia", 2026, now, { token: "t", sleep: async () => {} }),
+    (error: unknown) => error instanceof GitHubRequestError && error.status === 401,
+  );
+  assert.equal(calls, 1);
+});
+
+test("returns null when the databaseId is missing", async () => {
+  globalThis.fetch = (async () => Response.json(okPayload({ databaseId: null }))) as typeof fetch;
+  assert.equal(await fetchUserHistory("mia", 2026, now, { token: "t", sleep: async () => {} }), null);
+});
+
+test("does not sleep while the rate limit is high", async () => {
+  stubGraphQL([2026], 4_000);
+  const waits: number[] = [];
+  await fetchUserHistory("mia", 2026, now, {
+    token: "t",
+    sleep: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  assert.deepEqual(waits, []);
+});
