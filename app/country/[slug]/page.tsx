@@ -45,9 +45,7 @@ export default async function CountryPage({ params }: CountryPageProps) {
               {snapshot.users.length} gardeners · {formatUpdated(snapshot.generatedAt, now)}
             </p>
             {isStale(snapshot.generatedAt, now) ? (
-              <p className="board-page__stale">
-                Last {formatUpdated(snapshot.generatedAt, now)}.
-              </p>
+              <p className="board-page__stale">This board hasn&apos;t refreshed in over two days.</p>
             ) : null}
             <Board slug={country.slug} users={snapshot.users} scaleMax={boardScaleMax(snapshot.users)} />
           </>
