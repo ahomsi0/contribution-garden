@@ -30,11 +30,14 @@ export function Board({ slug, users, scaleMax }: BoardProps) {
       <input
         className="board__filter"
         type="search"
-        placeholder="Filter by username"
-        aria-label="Filter by username"
+        placeholder="Filter by name"
+        aria-label="Filter by name"
         value={filter}
         onChange={(event) => setFilter(event.target.value)}
       />
+      <p className="sr-only" aria-live="polite">
+        {`${visible.length} of ${users.length} gardeners`}
+      </p>
       {visible.length === 0 ? (
         <p className="board__empty">No gardeners match &lsquo;{filter.trim()}&rsquo;.</p>
       ) : (
