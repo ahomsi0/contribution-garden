@@ -6,6 +6,11 @@ export type Season = "spring" | "summer" | "autumn" | "winter";
 export type Weather = "sunny" | "rain" | "fog" | "snow" | "wind";
 export type TimeOfDay = "morning" | "day" | "sunset" | "night";
 
+export interface SelectedGardenDetail {
+  label: string;
+  value: string;
+}
+
 export interface SelectedGardenEntity {
   id: string;
   kind: "day" | "tree" | "flower" | "achievement" | "water" | "wildlife";
@@ -14,7 +19,13 @@ export interface SelectedGardenEntity {
   date?: string;
   count?: number;
   repositories?: string[];
-  details?: string;
+  /** The scene's one-line description of the selection. */
+  description?: string;
+  /** Labelled rows for the specimen card, such as "Busiest month". */
+  details?: SelectedGardenDetail[];
+  /** The selection's colour in the scene. */
+  accent?: string;
+  worldPosition?: [number, number, number];
 }
 
 interface GardenState {
