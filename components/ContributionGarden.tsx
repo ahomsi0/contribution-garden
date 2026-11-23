@@ -205,13 +205,11 @@ function gardenFromLocation(): { login: string; provider: GardenProvider } | nul
 export interface ContributionGardenProps {
   initialLogin: string;
   initialProvider: GardenProvider;
-  onReady?: () => void;
 }
 
 export default function ContributionGarden({
   initialLogin,
   initialProvider,
-  onReady,
 }: ContributionGardenProps) {
   const {
     provider,
@@ -265,7 +263,6 @@ export default function ContributionGarden({
   const [interactiveSceneReady, setInteractiveSceneReady] = useState(false);
   const [bootstrapped, setBootstrapped] = useState(false);
   const activeGardenRequest = useRef<AbortController | null>(null);
-  const hasReportedReady = useRef(false);
 
   useAmbientSound(soundEnabled, weather, reducedMotion);
 
@@ -353,10 +350,6 @@ export default function ContributionGarden({
       } finally {
         if (activeGardenRequest.current === controller) {
           activeGardenRequest.current = null;
-          if (!hasReportedReady.current) {
-            hasReportedReady.current = true;
-            onReady?.();
-          }
         }
       }
     }
@@ -373,7 +366,6 @@ export default function ContributionGarden({
     clearData,
     setSelected,
     setStatus,
-    onReady,
     provider,
     username,
     bootstrapped,
