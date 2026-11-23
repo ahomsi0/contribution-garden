@@ -39,7 +39,7 @@ import {
   YEAR_CROWN_RADIUS,
   YEAR_TREE_TOP,
 } from "./world/camera";
-import { Effects } from "./world/Effects";
+import { Effects, SCENE_COMPOSER_KEY } from "./world/Effects";
 import { Flora, useFloraLayout } from "./world/Flora";
 import { flowerClusters } from "./world/flora-layout";
 import { Island, ISLAND_SURFACE_OFFSET } from "./world/Island";
@@ -169,7 +169,10 @@ export function GardenScene({
         dpr={tier.dpr}
         frameloop="always"
         gl={{
-          antialias: quality !== "low",
+          // Low stays cheap; medium and high draw through the effect
+          // composer, which anti-aliases with FXAA, so a multisampled canvas
+          // would only add a full-screen resolve on top.
+          antialias: false,
           alpha: false,
           powerPreference: "high-performance",
         }}
@@ -233,12 +236,16 @@ function GardenCaptureBridge() {
       }>;
       if (!event.detail?.complete) return;
       event.preventDefault();
-      // The effect composer turns the renderer's tone mapping off and applies
-      // it as a pass; a direct render needs it back so colours match.
-      const toneMapping = gl.toneMapping;
-      gl.toneMapping = THREE.NeutralToneMapping;
-      gl.render(scene, camera);
-      gl.toneMapping = toneMapping;
+      const composer = scene.userData[SCENE_COMPOSER_KEY] as
+        | { render: (deltaTime?: number) => void }
+        | undefined;
+      if (composer) {
+        // The canvas has no multisampling of its own while a composer is
+        // mounted, so the portrait goes through it for FXAA and the effects.
+        composer.render(0);
+      } else {
+        gl.render(scene, camera);
+      }
       gl.domElement.toBlob(event.detail.complete, "image/png");
     };
 
@@ -410,6 +417,7 @@ function GardenWorld({
     <>
       <SkyAndLights
         fogScale={clamp(framing.distance / REFERENCE_DISTANCE, 0.9, 2.2)}
+        islandRadius={islandRadius}
         palette={world}
         reducedMotion={reducedMotion}
         seed={seed}

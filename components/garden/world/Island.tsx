@@ -91,7 +91,7 @@ export function Island({ radius, palette, tier, quality, seed }: IslandProps) {
   return (
     <mesh
       name="island"
-      castShadow={tier.shadows}
+      // Only trees, shrubs and rocks cast; the island just receives.
       receiveShadow={tier.shadows}
       geometry={geometry}
       material={materials}

@@ -1,12 +1,14 @@
 "use client";
 
-import { type JSX, useEffect, useMemo } from "react";
+import { type JSX, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useThree } from "@react-three/fiber";
-import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
+import { Bloom, EffectComposer, FXAA, Vignette } from "@react-three/postprocessing";
 import {
   BlendFunction,
+  type BloomEffect,
   Effect,
   EffectAttribute,
+  type EffectComposer as EffectComposerImpl,
   EffectPass,
 } from "postprocessing";
 
@@ -75,19 +77,59 @@ function SceneToneMapping() {
 }
 
 /**
+ * Where the mounted composer is kept on the scene, so a screenshot can render
+ * through it (the canvas itself has no multisampling while one is mounted).
+ */
+export const SCENE_COMPOSER_KEY = "gardenComposer";
+
+/**
  * Tiered post-processing: a soft bloom on high, a vignette on medium and
  * high, and nothing at all on low (no composer; the renderer tone-maps and
  * draws straight to the canvas). Tone mapping runs exactly once, first, then
- * bloom and the vignette.
+ * FXAA, bloom and the vignette.
+ *
+ * Anti-aliasing is FXAA, not multisampling. On the GPUs we measured, a
+ * multisampled half-float target (plus its depth resolve) cost 5 ms at 2×
+ * and 11 ms at 4× for a 1920×1200 canvas; FXAA rides along in the bloom and
+ * vignette pass for well under a millisecond. The canvas context is created
+ * without multisampling for the same reason (see `GardenScene`).
  */
 export function Effects({ tier }: { tier: TierSettings }) {
-  if (!tier.bloom && !tier.vignette) return null;
+  const getThree = useThree((state) => state.get);
+  const composer = useRef<EffectComposerImpl>(null);
+  const enabled = tier.bloom || tier.vignette;
 
-  const effects: JSX.Element[] = [<SceneToneMapping key="tone" />];
+  useLayoutEffect(() => {
+    const current = composer.current;
+    if (!enabled || !current) return;
+    const { userData } = getThree().scene;
+    userData[SCENE_COMPOSER_KEY] = current;
+    return () => {
+      if (userData[SCENE_COMPOSER_KEY] === current) {
+        delete userData[SCENE_COMPOSER_KEY];
+      }
+    };
+  }, [enabled, getThree]);
+
+  // The mipmap blur downsamples the bright-pass right away, so it can start
+  // from a half-resolution bright-pass with no visible change.
+  const halfResolutionBloom = useCallback((effect: BloomEffect | null) => {
+    if (effect) effect.luminancePass.resolution.scale = 0.5;
+  }, []);
+
+  if (!enabled) return null;
+
+  // FXAA reads the tone-mapped buffer directly, so it leads its pass and
+  // bloom and the vignette blend on top of the smoothed image.
+  const effects: JSX.Element[] = [
+    <SceneToneMapping key="tone" />,
+    <FXAA key="fxaa" />,
+  ];
   if (tier.bloom) {
     effects.push(
       <Bloom
         key="bloom"
+        ref={halfResolutionBloom}
         intensity={0.25}
         luminanceThreshold={0.85}
         mipmapBlur
@@ -99,7 +141,11 @@ export function Effects({ tier }: { tier: TierSettings }) {
   }
 
   return (
-    <EffectComposer enableNormalPass={false} multisampling={4}>
+    <EffectComposer
+      ref={composer}
+      enableNormalPass={false}
+      multisampling={0}
+    >
       {effects}
     </EffectComposer>
   );

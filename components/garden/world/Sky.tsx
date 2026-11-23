@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 
 import type { GardenTimeOfDay, GardenWeather } from "../types";
@@ -22,10 +22,24 @@ export interface SkyAndLightsProps {
    * framed from further away is no hazier than one framed close up.
    */
   fogScale?: number;
+  /** Island radius; the sun's shadow camera is fitted to it. */
+  islandRadius?: number;
 }
 
 const DOME_RADIUS = 54;
-const SHADOW_EXTENT = 14;
+/**
+ * The shadow camera covers the island plus this much, enough for a year
+ * tree's crown overhanging the rim.
+ */
+const SHADOW_MARGIN = 2.5;
+/**
+ * The shadow map is redrawn every this many frames rather than every frame.
+ * Nothing that casts a shadow moves quickly (canopy sway is applied after the
+ * shadow pass's depth material, so it never reaches the map), and the pass
+ * costs about 4 ms on high, so a refresh every fourth frame keeps growth and
+ * season changes current at a quarter of the cost.
+ */
+const SHADOW_UPDATE_INTERVAL = 4;
 /** Dome height (−1..1) of the warm horizon band. */
 const HORIZON_HEIGHT = -0.2;
 
@@ -81,6 +95,7 @@ export function SkyAndLights({
   reducedMotion,
   seed,
   fogScale = 1,
+  islandRadius = 11.5,
 }: SkyAndLightsProps) {
   const fog = fogRange(weather, timeOfDay);
   const skyColor = useMemo(
@@ -122,6 +137,7 @@ export function SkyAndLights({
         color={palette.sun}
         intensity={palette.sunIntensity * (weather === "rain" ? 0.7 : 1)}
         position={SUN_POSITIONS[timeOfDay]}
+        shadowExtent={islandRadius + SHADOW_MARGIN}
         tier={tier}
       />
       <directionalLight
@@ -221,24 +237,28 @@ function KeyLight({
   color,
   intensity,
   position,
+  shadowExtent,
   tier,
 }: {
   color: string;
   intensity: number;
   position: VectorTuple;
+  shadowExtent: number;
   tier: TierSettings;
 }) {
   const light = useRef<THREE.DirectionalLight>(null);
+  const getThree = useThree((state) => state.get);
+  const frame = useRef(0);
 
   useLayoutEffect(() => {
     const current = light.current;
     if (!current) return;
     const { shadow } = current;
     const camera = shadow.camera;
-    camera.left = -SHADOW_EXTENT;
-    camera.right = SHADOW_EXTENT;
-    camera.top = SHADOW_EXTENT;
-    camera.bottom = -SHADOW_EXTENT;
+    camera.left = -shadowExtent;
+    camera.right = shadowExtent;
+    camera.top = shadowExtent;
+    camera.bottom = -shadowExtent;
     camera.near = 0.5;
     camera.far = 60;
     camera.updateProjectionMatrix();
@@ -253,7 +273,24 @@ function KeyLight({
     shadow.normalBias = 0.025;
     shadow.radius = tier.shadowMapSize >= 2048 ? 3 : 1.5;
     shadow.needsUpdate = true;
-  }, [tier.shadowMapSize]);
+    getThree().gl.shadowMap.needsUpdate = true;
+  }, [getThree, shadowExtent, tier.shadowMapSize]);
+
+  // Redraw the shadow map on a schedule instead of every frame.
+  useLayoutEffect(() => {
+    if (!tier.shadows) return;
+    const { shadowMap } = getThree().gl;
+    shadowMap.autoUpdate = false;
+    shadowMap.needsUpdate = true;
+    return () => {
+      shadowMap.autoUpdate = true;
+    };
+  }, [getThree, tier.shadows]);
+  useFrame((state) => {
+    if (!tier.shadows) return;
+    frame.current = (frame.current + 1) % SHADOW_UPDATE_INTERVAL;
+    if (frame.current === 0) state.gl.shadowMap.needsUpdate = true;
+  });
 
   return (
     <directionalLight

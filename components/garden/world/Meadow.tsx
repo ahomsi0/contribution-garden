@@ -40,8 +40,6 @@ export interface MeadowProps {
   onSelect?: (selection: GardenSelection | null) => void;
 }
 
-/** Shadow casting gets expensive past this many tufts. */
-const CAST_SHADOW_LIMIT = 3000;
 /** World-space tuft height per intensity level (index 0 unused). */
 const LEVEL_HEIGHT = [0.12, 0.15, 0.22, 0.3, 0.39];
 /** Local tuft width per intensity level (index 0 unused). */
@@ -404,8 +402,8 @@ export function Meadow({
     <instancedMesh
       ref={mesh}
       args={[geometry, material, tufts.length]}
-      castShadow={tier.shadows && tufts.length < CAST_SHADOW_LIMIT}
-      receiveShadow
+      // Grass only receives shadows; its own would be too fine to read.
+      receiveShadow={tier.shadows}
       onClick={selectTuft}
       {...cursorHandlers}
     />
