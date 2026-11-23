@@ -16,3 +16,18 @@ test("isStale after 48 hours", () => {
   assert.equal(isStale("2026-11-21T13:00:00.000Z", now), false);
   assert.equal(isStale("2026-11-21T11:00:00.000Z", now), true);
 });
+
+test("unparseable timestamps are unknown and stale", () => {
+  assert.equal(formatUpdated("garbage", now), "update time unknown");
+  assert.equal(isStale("garbage", now), true);
+});
+
+test("future timestamps read as just now and are not stale", () => {
+  assert.equal(formatUpdated("2026-11-24T12:00:00.000Z", now), "updated just now");
+  assert.equal(isStale("2026-11-24T12:00:00.000Z", now), false);
+});
+
+test("staleness boundary is exactly 48 hours", () => {
+  assert.equal(isStale("2026-11-21T12:00:00.000Z", now), false);
+  assert.equal(isStale("2026-11-21T11:59:00.000Z", now), true);
+});
