@@ -18,7 +18,8 @@ async function resolve({ params, searchParams }: UserPageProps) {
 
 export async function generateMetadata(props: UserPageProps): Promise<Metadata> {
   const { handle } = await resolve(props);
-  return { title: handle ? `@${handle}'s garden` : "Garden not found" };
+  if (!handle) return { title: "Garden not found" };
+  return { title: `@${handle}'s garden`, alternates: { canonical: `/u/${handle}` } };
 }
 
 export default async function UserGardenPage(props: UserPageProps) {

@@ -16,7 +16,11 @@ async function resolve({ searchParams }: GitlabPageProps) {
 
 export async function generateMetadata(props: GitlabPageProps): Promise<Metadata> {
   const handle = await resolve(props);
-  return { title: handle ? `@${handle}'s garden` : "Garden not found" };
+  if (!handle) return { title: "Garden not found" };
+  return {
+    title: `@${handle}'s garden`,
+    alternates: { canonical: `/gitlab?user=${encodeURIComponent(handle)}` },
+  };
 }
 
 export default async function GitlabGardenPage(props: GitlabPageProps) {

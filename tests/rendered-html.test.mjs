@@ -941,3 +941,23 @@ test("shows the not-growing state on /gitlab without a user", async () => {
   assert.equal(response.status, 200);
   assert.match(await response.text(), /Nothing growing here/);
 });
+
+async function canonicalOf(path) {
+  const app = await worker();
+  const response = await app.fetch(
+    new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
+    environment,
+    context,
+  );
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  const tag = html.match(/<link[^>]*rel="canonical"[^>]*>/)?.[0] ?? "";
+  return tag.match(/href="([^"]*)"/)?.[1] ?? "";
+}
+
+test("each page declares its own canonical URL", async () => {
+  assert.match(await canonicalOf("/country/germany"), /\/country\/germany$/);
+  assert.match(await canonicalOf("/u/octocat"), /\/u\/octocat$/);
+  assert.match(await canonicalOf("/gitlab?user=john.doe"), /\/gitlab\?user=john\.doe$/);
+  assert.match(await canonicalOf("/"), /\/$/);
+});

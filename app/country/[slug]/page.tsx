@@ -17,7 +17,11 @@ interface CountryPageProps {
 export async function generateMetadata({ params }: CountryPageProps): Promise<Metadata> {
   const { slug } = await params;
   const country = findCountry(slug);
-  return { title: country ? `Top gardeners in ${country.name}` : "Country not found" };
+  if (!country) return { title: "Country not found" };
+  return {
+    title: `Top gardeners in ${country.name}`,
+    alternates: { canonical: `/country/${slug}` },
+  };
 }
 
 export default async function CountryPage({ params }: CountryPageProps) {
