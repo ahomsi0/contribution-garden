@@ -50,3 +50,41 @@ test("buildIndex replaces rebuilt countries and keeps the rest", () => {
   assert.equal(index.countries[1].userCount, 5);
   assert.equal(index.generatedAt, "2026-11-23T04:00:00.000Z");
 });
+
+const invalidCases: Array<[string, (s: CountrySnapshot) => void]> = [
+  ["garbage generatedAt", (s) => { s.generatedAt = "garbage"; }],
+  ["array country", (s) => { (s as unknown as { country: unknown }).country = []; }],
+  ["path-like login", (s) => { s.users[0].login = "../../admin"; }],
+  ["javascript avatarUrl", (s) => { s.users[0].avatarUrl = "javascript:alert(1)"; }],
+  ["rank 0", (s) => { s.users[0].rank = 0; }],
+  ["negative id", (s) => { s.users[0].id = -5; }],
+  ["year 1999", (s) => { s.users[0].years[0].year = 1999; }],
+  ["fractional year", (s) => { s.users[0].years[0].year = 2024.5; }],
+  ["NaN month", (s) => { s.users[0].years[0].months[0] = NaN; }],
+  ["Infinity month", (s) => { s.users[0].years[0].months[0] = Infinity; }],
+  ["missing users", (s) => { delete (s as unknown as { users?: unknown }).users; }],
+];
+
+for (const [label, mutate] of invalidCases) {
+  test(`rejects snapshot with ${label}`, () => {
+    const snapshot = structuredClone(validSnapshot);
+    mutate(snapshot);
+    assert.equal(isCountrySnapshot(snapshot), false);
+  });
+}
+
+test("isRankingsIndex rejects an unparseable updatedAt", () => {
+  const index: RankingsIndex = {
+    version: 1,
+    generatedAt: "2026-11-23T03:00:00.000Z",
+    countries: [{ slug: "germany", name: "Germany", updatedAt: "nope", userCount: 0, leader: null }],
+  };
+  assert.equal(isRankingsIndex(index), false);
+});
+
+test("buildIndex yields a null leader for a snapshot with no users", () => {
+  const empty = { ...structuredClone(validSnapshot), users: [] };
+  const index = buildIndex(null, [empty], ["germany"], new Date("2026-11-23T04:00:00.000Z"));
+  assert.equal(index.countries[0].leader, null);
+  assert.equal(isRankingsIndex(index), true);
+});

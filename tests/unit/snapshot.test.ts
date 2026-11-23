@@ -87,3 +87,54 @@ test("rankUsers sorts by score and uses competition ranking for ties", () => {
     ],
   );
 });
+
+test("mergeWithPrevious returns all fresh years for a new user", () => {
+  const fresh = [2019, 2020, 2021].map((year) => ({ year, months: zeros() }));
+  const merged = mergeWithPrevious([], fresh, 2026);
+  assert.deepEqual(merged.map((y) => y.year), [2019, 2020, 2021]);
+});
+
+test("mergeWithPrevious keeps earlier previous years when fresh only has the current year", () => {
+  const merged = mergeWithPrevious(
+    [
+      { year: 2020, months: zeros() },
+      { year: 2024, months: zeros() },
+    ],
+    [{ year: 2026, months: zeros() }],
+    2026,
+  );
+  assert.deepEqual(merged.map((y) => y.year), [2020, 2024, 2026]);
+});
+
+test("mergeWithPrevious lets fresh data win over previous for the same year", () => {
+  const old2024 = zeros();
+  old2024[0] = 10;
+  const new2024 = zeros();
+  new2024[0] = 99;
+  const merged = mergeWithPrevious(
+    [{ year: 2024, months: old2024 }],
+    [{ year: 2024, months: new2024 }],
+    2026,
+  );
+  assert.deepEqual(merged.map((y) => [y.year, y.months[0]]), [[2024, 99]]);
+});
+
+const plainUser = (login: string, score: number): UnrankedUser => ({
+  id: 1,
+  login,
+  name: null,
+  avatarUrl: "",
+  score,
+  years: [],
+});
+
+test("rankUsers handles empty input, zero limit, and oversized limit", () => {
+  assert.deepEqual(rankUsers([], 5), []);
+  assert.deepEqual(rankUsers([plainUser("a", 1)], 0), []);
+  assert.equal(rankUsers([plainUser("a", 2), plainUser("b", 1)], 10).length, 2);
+});
+
+test("rankUsers breaks ties by case-insensitive login order", () => {
+  const ranked = rankUsers([plainUser("b", 5), plainUser("B2", 5), plainUser("a", 5)], 10);
+  assert.deepEqual(ranked.map((u) => u.login), ["a", "b", "B2"]);
+});
