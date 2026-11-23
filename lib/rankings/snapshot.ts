@@ -103,3 +103,112 @@ export function rankUsers(users: readonly UnrankedUser[], limit: number): Ranked
   }
   return ranked;
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isYearMonths(value: unknown): value is YearMonths {
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.year) &&
+    Array.isArray(value.months) &&
+    value.months.length === 12 &&
+    value.months.every(isNonNegativeNumber)
+  );
+}
+
+function isRankedUser(value: unknown): value is RankedUser {
+  return (
+    isRecord(value) &&
+    Number.isInteger(value.rank) &&
+    Number.isInteger(value.id) &&
+    typeof value.login === "string" &&
+    (value.name === null || typeof value.name === "string") &&
+    typeof value.avatarUrl === "string" &&
+    isNonNegativeNumber(value.score) &&
+    Array.isArray(value.years) &&
+    value.years.every(isYearMonths)
+  );
+}
+
+export function isCountrySnapshot(value: unknown): value is CountrySnapshot {
+  return (
+    isRecord(value) &&
+    value.version === 1 &&
+    isRecord(value.country) &&
+    typeof value.country.slug === "string" &&
+    typeof value.country.name === "string" &&
+    typeof value.generatedAt === "string" &&
+    isNonNegativeNumber(value.candidateCount) &&
+    Array.isArray(value.users) &&
+    value.users.every(isRankedUser)
+  );
+}
+
+function isIndexEntry(value: unknown): value is RankingsIndexEntry {
+  if (!isRecord(value)) return false;
+  const leader = value.leader;
+  return (
+    typeof value.slug === "string" &&
+    typeof value.name === "string" &&
+    typeof value.updatedAt === "string" &&
+    isNonNegativeNumber(value.userCount) &&
+    (leader === null ||
+      (isRecord(leader) &&
+        typeof leader.login === "string" &&
+        typeof leader.avatarUrl === "string" &&
+        isNonNegativeNumber(leader.score)))
+  );
+}
+
+export function isRankingsIndex(value: unknown): value is RankingsIndex {
+  return (
+    isRecord(value) &&
+    value.version === 1 &&
+    typeof value.generatedAt === "string" &&
+    Array.isArray(value.countries) &&
+    value.countries.every(isIndexEntry)
+  );
+}
+
+function indexEntry(snapshot: CountrySnapshot): RankingsIndexEntry {
+  const leader = snapshot.users[0];
+  return {
+    slug: snapshot.country.slug,
+    name: snapshot.country.name,
+    updatedAt: snapshot.generatedAt,
+    userCount: snapshot.users.length,
+    leader: leader
+      ? { login: leader.login, avatarUrl: leader.avatarUrl, score: leader.score }
+      : null,
+  };
+}
+
+/**
+ * Combine freshly built snapshots with the previous index. Countries are
+ * listed in `order` (config order); a country with neither a fresh snapshot
+ * nor a previous entry is omitted.
+ */
+export function buildIndex(
+  previous: RankingsIndex | null,
+  fresh: readonly CountrySnapshot[],
+  order: readonly string[],
+  now: Date,
+): RankingsIndex {
+  const bySlug = new Map<string, RankingsIndexEntry>();
+  for (const entry of previous?.countries ?? []) bySlug.set(entry.slug, entry);
+  for (const snapshot of fresh) bySlug.set(snapshot.country.slug, indexEntry(snapshot));
+  return {
+    version: 1,
+    generatedAt: now.toISOString(),
+    countries: order.flatMap((slug) => {
+      const entry = bySlug.get(slug);
+      return entry ? [entry] : [];
+    }),
+  };
+}
