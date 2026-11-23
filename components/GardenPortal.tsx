@@ -1,245 +1,103 @@
 "use client";
 
-import type { ComponentType, FormEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  gardenProviderLabel,
-  normalizeGardenHandle,
-  type GardenProvider,
-} from "@/lib/garden-provider";
+import type { FormEvent } from "react";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { normalizeGardenHandle } from "@/lib/garden-provider";
 
 import "./garden-portal.css";
 
-type PortalPhase = "landing" | "loading" | "garden";
-
-interface InteractiveGardenProps {
-  onReady?: () => void;
-}
-
 export default function GardenPortal() {
-  const [phase, setPhase] = useState<PortalPhase>("landing");
-  const [provider, setProvider] = useState<GardenProvider>("github");
-  const [username, setUsername] = useState("octocat");
+  const router = useRouter();
+  const [username, setUsername] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [heroVisible, setHeroVisible] = useState(true);
-  const [InteractiveGarden, setInteractiveGarden] =
-    useState<ComponentType<InteractiveGardenProps> | null>(null);
-  const hideHeroTimer = useRef<number | null>(null);
+  const [opening, setOpening] = useState(false);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requestedProvider: GardenProvider =
-      params.get("provider") === "gitlab" ? "gitlab" : "github";
-    const requested = normalizeGardenHandle(
-      params.get("user") ?? "",
-      requestedProvider,
-    );
-    if (!requested) return;
-    const frame = window.requestAnimationFrame(() => {
-      setProvider(requestedProvider);
-      setUsername(requested);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (hideHeroTimer.current !== null) {
-        window.clearTimeout(hideHeroTimer.current);
-      }
-    },
-    [],
-  );
-
-  async function enterGarden(event?: FormEvent<HTMLFormElement>) {
-    event?.preventDefault();
-    if (phase === "loading") return;
-
-    const normalized = normalizeGardenHandle(username, provider);
-    if (!normalized) {
-      setError(`Enter a valid ${gardenProviderLabel(provider)} username.`);
+  function openGarden(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const handle = normalizeGardenHandle(username, "github");
+    if (!handle) {
+      setError("Enter a valid GitHub username.");
       return;
     }
-
-    setError(null);
-    setUsername(normalized);
-    const nextUrl = new URL(window.location.href);
-    nextUrl.searchParams.set("user", normalized);
-    nextUrl.searchParams.set("provider", provider);
-    window.history.replaceState({}, "", nextUrl);
-    setPhase("loading");
-
-    try {
-      const gardenModule = await import("@/components/ContributionGarden");
-      setInteractiveGarden(() => gardenModule.default);
-    } catch {
-      setPhase("landing");
-      setError("The garden could not open. Please try again.");
-    }
-  }
-
-  const handleGardenReady = useCallback(() => {
-    setPhase("garden");
-    if (hideHeroTimer.current === null) {
-      hideHeroTimer.current = window.setTimeout(() => {
-        setHeroVisible(false);
-        hideHeroTimer.current = null;
-      }, 900);
-    }
-  }, []);
-
-  function returnToOverview() {
-    if (hideHeroTimer.current !== null) {
-      window.clearTimeout(hideHeroTimer.current);
-      hideHeroTimer.current = null;
-    }
-    setHeroVisible(true);
-    setInteractiveGarden(null);
-    setPhase("landing");
+    setOpening(true);
+    router.push(`/u/${handle}`);
   }
 
   return (
-    <main
-      className={`garden-portal is-${phase}`}
-      data-portal-phase={phase}
-      aria-label="Contribution Garden"
-    >
-      {InteractiveGarden ? (
-        <div className="garden-portal__world">
-          <InteractiveGarden onReady={handleGardenReady} />
+    <section className="garden-portal is-landing" aria-labelledby="garden-portal-title">
+      <div className="garden-portal__hero">
+        <div className="garden-portal__image" aria-hidden="true">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/garden-hero-v5-lush.webp"
+            alt=""
+            width="1672"
+            height="941"
+            decoding="async"
+            fetchPriority="high"
+          />
         </div>
-      ) : null}
+        <div className="garden-portal__veil" aria-hidden="true" />
 
-      {heroVisible ? (
-        <section
-          className="garden-portal__hero"
-          aria-labelledby="garden-portal-title"
-        >
-          <div className="garden-portal__image" aria-hidden="true">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/garden-hero-v5-lush.webp"
-              alt=""
-              width="1672"
-              height="941"
-              decoding="async"
-              fetchPriority="high"
-            />
+        <header className="garden-portal__header">
+          <div className="garden-portal__brand" aria-label="Contribution Garden home">
+            <span className="garden-portal__brand-name">Contribution Garden</span>
+            <span className="garden-portal__brand-note">A living code archive</span>
           </div>
-          <div className="garden-portal__veil" aria-hidden="true" />
+          <a className="garden-portal__edition" href="#country-grid-title">
+            Top gardeners by country ↓
+          </a>
+        </header>
 
-          <header className="garden-portal__header">
-            <div
-              className="garden-portal__brand"
-              aria-label="Contribution Garden home"
-            >
-              <span className="garden-portal__brand-name">
-                Contribution Garden
-              </span>
-              <span className="garden-portal__brand-note">
-                A living code archive
-              </span>
-            </div>
-            <span className="garden-portal__edition">
-              Interactive field study · 2026
-            </span>
-          </header>
+        <div className="garden-portal__content">
+          <p className="garden-portal__eyebrow">
+            <span aria-hidden="true">01</span>
+            Your work, made living
+          </p>
+          <h1 id="garden-portal-title">
+            Every contribution leaves <em>something growing.</em>
+          </h1>
+          <p className="garden-portal__lede">
+            See the most active developers in your country as living gardens, or step inside
+            anyone&apos;s GitHub history—where streaks become paths and years of work grow into
+            landmarks.
+          </p>
 
-          <div className="garden-portal__content">
-            <p className="garden-portal__eyebrow">
-              <span aria-hidden="true">01</span>
-              Your work, made living
-            </p>
-            <h1 id="garden-portal-title">
-              Every contribution leaves{" "}
-              <em>something growing.</em>
-            </h1>
-            <p className="garden-portal__lede">
-              Step inside a walkable world shaped by your {gardenProviderLabel(provider)} history—where
-              streaks become paths, repositories take root, and years of work
-              grow into landmarks.
-            </p>
-
-            <form className="garden-portal__entry" onSubmit={enterGarden}>
-              <label htmlFor="garden-username">
-                {gardenProviderLabel(provider)} username
-              </label>
-              <div className="garden-portal__entry-row">
-                <div className="garden-portal__username">
-                  <span aria-hidden="true">@</span>
-                  <input
-                    id="garden-username"
-                    value={username}
-                    onChange={(event) => {
-                      setUsername(event.target.value);
-                      if (error) setError(null);
-                    }}
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    disabled={phase === "loading"}
-                  />
-                </div>
-                <button type="submit" disabled={phase === "loading"}>
-                  <span>
-                    {phase === "loading"
-                      ? "Growing your world"
-                      : "Enter the garden"}
-                  </span>
-                  <span aria-hidden="true">
-                    {phase === "loading" ? "···" : "↗"}
-                  </span>
-                </button>
+          <form className="garden-portal__entry" onSubmit={openGarden}>
+            <label htmlFor="garden-username">GitHub username</label>
+            <div className="garden-portal__entry-row">
+              <div className="garden-portal__username">
+                <span aria-hidden="true">@</span>
+                <input
+                  id="garden-username"
+                  value={username}
+                  placeholder="octocat"
+                  onChange={(event) => {
+                    setUsername(event.target.value);
+                    if (error) setError(null);
+                  }}
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  disabled={opening}
+                />
               </div>
-              {error ? (
-                <p className="garden-portal__error" role="alert">
-                  {error}
-                </p>
-              ) : (
-                <p className="garden-portal__hint">
-                  Public contribution history · No sign-in required
-                </p>
-              )}
-            </form>
-          </div>
-
-          <div
-            className="garden-portal__legend"
-            role="group"
-            aria-label="How the garden grows"
-          >
-            <div>
-              <span>Contributions</span>
-              <strong>Wildflowers</strong>
+              <button type="submit" disabled={opening}>
+                <span>{opening ? "Opening the garden" : "Enter the garden"}</span>
+                <span aria-hidden="true">{opening ? "···" : "↗"}</span>
+              </button>
             </div>
-            <div>
-              <span>Streaks</span>
-              <strong>Winding paths</strong>
-            </div>
-            <div>
-              <span>Years</span>
-              <strong>Old growth</strong>
-            </div>
-          </div>
-
-          {phase === "loading" ? (
-            <div className="garden-portal__loading-line" aria-hidden="true">
-              <span />
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-
-      {phase === "garden" ? (
-        <button
-          className="garden-portal__overview"
-          type="button"
-          onClick={returnToOverview}
-        >
-          <span aria-hidden="true">←</span>
-          Overview
-        </button>
-      ) : null}
-    </main>
+            {error ? (
+              <p className="garden-portal__error" role="alert">
+                {error}
+              </p>
+            ) : (
+              <p className="garden-portal__hint">Public contribution history · No sign-in required</p>
+            )}
+          </form>
+        </div>
+      </div>
+    </section>
   );
 }
