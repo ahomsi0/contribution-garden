@@ -51,33 +51,11 @@ import {
 } from "./world/mapping";
 import { Meadow } from "./world/Meadow";
 import { isOutsideMeadowPond } from "./world/meadow-layout";
-import { worldPalette } from "./world/palette";
+import { type WorldPalette, worldPalette } from "./world/palette";
 import { SkyAndLights } from "./world/Sky";
 import { TIER_SETTINGS } from "./world/tiers";
 import { Trees } from "./world/Trees";
 import { outflowRimPoint, Water } from "./world/Water";
-
-interface GardenPalette {
-  sky: string;
-  fog: string;
-  horizon: string;
-  ground: string;
-  groundDry: string;
-  earth: string;
-  cliff: string;
-  foliage: [string, string, string, string];
-  flowers: [string, string, string, string];
-  trunk: string;
-  stone: string;
-  stoneLight: string;
-  water: string;
-  waterGlow: string;
-  sun: string;
-  ambient: string;
-  lightIntensity: number;
-  ambientIntensity: number;
-  mote: string;
-}
 
 /** How long the orbit camera takes to ease to a new framing, seconds. */
 const REFRAME_SECONDS = 0.8;
@@ -87,133 +65,6 @@ const EMPTY_WALK_INPUT: GardenWalkInput = {
   left: false,
   right: false,
   sprint: false,
-};
-
-const SEASON_PALETTES: Record<
-  GardenSeason,
-  Pick<
-    GardenPalette,
-    | "ground"
-    | "groundDry"
-    | "earth"
-    | "cliff"
-    | "foliage"
-    | "flowers"
-    | "trunk"
-    | "stone"
-    | "stoneLight"
-    | "water"
-    | "waterGlow"
-    | "mote"
-  >
-> = {
-  spring: {
-    ground: "#70865b",
-    groundDry: "#948163",
-    earth: "#514237",
-    cliff: "#6f665d",
-    foliage: ["#294232", "#3c5838", "#526b43", "#71815a"],
-    flowers: ["#c89ca8", "#d7c58b", "#9e98b8", "#e3ddd0"],
-    trunk: "#584538",
-    stone: "#70756e",
-    stoneLight: "#a9aca0",
-    water: "#4e7374",
-    waterGlow: "#89aaa5",
-    mote: "#d9cfaa",
-  },
-  summer: {
-    ground: "#71865e",
-    groundDry: "#948462",
-    earth: "#49392f",
-    cliff: "#685d53",
-    foliage: ["#233d2e", "#34523a", "#496741", "#657d50"],
-    flowers: ["#cea767", "#bd7776", "#d2cfac", "#7fa2aa"],
-    trunk: "#504034",
-    stone: "#686f6a",
-    stoneLight: "#9fa699",
-    water: "#456c70",
-    waterGlow: "#7da49e",
-    mote: "#d8c57c",
-  },
-  autumn: {
-    ground: "#6b7350",
-    groundDry: "#8e704d",
-    earth: "#49372d",
-    cliff: "#65554a",
-    foliage: ["#6b4032", "#87513a", "#a56c42", "#b58a53"],
-    flowers: ["#b99759", "#a96848", "#d7caa6", "#815b65"],
-    trunk: "#4d3a31",
-    stone: "#686960",
-    stoneLight: "#9e998a",
-    water: "#526e6c",
-    waterGlow: "#829c92",
-    mote: "#c59e62",
-  },
-  winter: {
-    ground: "#c4cdc8",
-    groundDry: "#9e9d8d",
-    earth: "#49423d",
-    cliff: "#69645f",
-    foliage: ["#2f443d", "#40564c", "#5d6c62", "#7c8980"],
-    flowers: ["#b9c6c8", "#d7dcda", "#9facb5", "#c2b8c6"],
-    trunk: "#4c413a",
-    stone: "#6b7271",
-    stoneLight: "#bbc2bf",
-    water: "#6f8b92",
-    waterGlow: "#b0c5c6",
-    mote: "#dce4e6",
-  },
-};
-
-const DAY_PALETTES: Record<
-  GardenTimeOfDay,
-  Pick<
-    GardenPalette,
-    | "sky"
-    | "fog"
-    | "horizon"
-    | "sun"
-    | "ambient"
-    | "lightIntensity"
-    | "ambientIntensity"
-  >
-> = {
-  morning: {
-    sky: "#9eb7b2",
-    fog: "#c4ccc4",
-    horizon: "#d5b58a",
-    sun: "#f5d2a2",
-    ambient: "#c5cec7",
-    lightIntensity: 2.8,
-    ambientIntensity: 0.4,
-  },
-  day: {
-    sky: "#8daeb6",
-    fog: "#bdc9c4",
-    horizon: "#cbd2bd",
-    sun: "#f6e5bb",
-    ambient: "#cbd5cd",
-    lightIntensity: 3.2,
-    ambientIntensity: 0.46,
-  },
-  sunset: {
-    sky: "#857c87",
-    fog: "#aa9489",
-    horizon: "#c59269",
-    sun: "#efae72",
-    ambient: "#b9a19a",
-    lightIntensity: 2.6,
-    ambientIntensity: 0.34,
-  },
-  night: {
-    sky: "#111925",
-    fog: "#293440",
-    horizon: "#354352",
-    sun: "#bdc9dc",
-    ambient: "#708097",
-    lightIntensity: 0.78,
-    ambientIntensity: 0.18,
-  },
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -242,10 +93,6 @@ function seededRandom(seed: number) {
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-function paletteFor(season: GardenSeason, timeOfDay: GardenTimeOfDay) {
-  return { ...SEASON_PALETTES[season], ...DAY_PALETTES[timeOfDay] };
 }
 
 function deriveActivity(stats: GardenStats, days: GardenDay[]) {
@@ -287,10 +134,6 @@ export function GardenScene({
 }: GardenSceneProps) {
   const health = clamp01(activity ?? deriveActivity(stats, days));
   const seed = hashString(`${username}:contribution-garden-layout`);
-  const palette = useMemo(
-    () => paletteFor(season, timeOfDay),
-    [season, timeOfDay],
-  );
   const tier = TIER_SETTINGS[quality] ?? TIER_SETTINGS.high;
   const skyColor = worldPalette(season, timeOfDay).sky;
 
@@ -353,7 +196,6 @@ export function GardenScene({
             reducedMotion={reducedMotion}
             health={health}
             seed={seed}
-            palette={palette}
             flythrough={flythrough}
             walkthrough={walkthrough}
             walkInput={walkInput}
@@ -420,7 +262,6 @@ interface GardenWorldProps {
   reducedMotion: boolean;
   health: number;
   seed: number;
-  palette: GardenPalette;
   flythrough: boolean;
   walkthrough: boolean;
   walkInput: GardenWalkInput;
@@ -466,7 +307,6 @@ function GardenWorld({
   reducedMotion,
   health,
   seed,
-  palette,
   flythrough,
   walkthrough,
   walkInput,
@@ -577,7 +417,7 @@ function GardenWorld({
         timeOfDay={timeOfDay}
         weather={weather}
       />
-      {timeOfDay === "night" ? <CelestialBody color={palette.sun} /> : null}
+      {timeOfDay === "night" ? <CelestialBody color={world.sun} /> : null}
       <Island
         palette={world}
         quality={quality}
@@ -650,7 +490,7 @@ function GardenWorld({
       />
       <WeatherSystem
         density={density}
-        palette={palette}
+        palette={world}
         quality={quality}
         reducedMotion={reducedMotion}
         seed={seed + 997}
@@ -878,7 +718,7 @@ function WeatherSystem({
   weather,
 }: {
   density: number;
-  palette: GardenPalette;
+  palette: WorldPalette;
   quality: GardenQuality;
   reducedMotion: boolean;
   seed: number;
@@ -908,7 +748,7 @@ function WeatherSystem({
       ) : null}
       {weather === "wind" ? (
         <WeatherParticles
-          color={season === "autumn" ? palette.flowers[1] : palette.mote}
+          color={season === "autumn" ? palette.flowers[1] : palette.sun}
           count={Math.round(95 * density)}
           mode="wind"
           reducedMotion={reducedMotion}
@@ -925,7 +765,7 @@ function WeatherSystem({
         />
       ) : null}
       {quality === "low" && weather === "sunny" && timeOfDay !== "night" ? (
-        <AmbientMotes color={palette.mote} count={Math.round(95 * density)} seed={seed + 6} reducedMotion={reducedMotion} />
+        <AmbientMotes color={palette.sun} count={Math.round(95 * density)} seed={seed + 6} reducedMotion={reducedMotion} />
       ) : null}
     </group>
   );

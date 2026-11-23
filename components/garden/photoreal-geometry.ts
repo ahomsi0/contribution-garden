@@ -8,7 +8,7 @@ export const PHOTOREAL_ISLAND_MATERIAL_INDEX = {
   soil: 2,
 } as const;
 
-export interface PhotorealIslandGeometryOptions {
+interface PhotorealIslandGeometryOptions {
   /**
    * The island's maximum horizontal radius. Values are constrained to a
    * 9–13 metre range so the finished island stays 18–26 metres wide. The
@@ -19,7 +19,7 @@ export interface PhotorealIslandGeometryOptions {
   seed: number;
 }
 
-export interface PhotorealIslandSurfaceSampleOptions
+interface PhotorealIslandSurfaceSampleOptions
   extends PhotorealIslandGeometryOptions {
   x: number;
   z: number;
@@ -462,20 +462,6 @@ export function createPhotorealIslandSurfaceSampler({
 }
 
 /**
- * Samples the same deterministic height profile used to generate the island.
- * Prefer `createPhotorealIslandSurfaceSampler` for per-frame sampling.
- */
-export function samplePhotorealIslandSurfaceHeight({
-  x,
-  z,
-  radius,
-  seed,
-}: PhotorealIslandSurfaceSampleOptions): number | null {
-  const profile = createIslandProfile(radius, seed);
-  return profile.surfaceContains(x, z) ? profile.terrainHeightAt(x, z) : null;
-}
-
-/**
  * Builds a single indexed geometry with three material groups:
  * 0 = rocky cliff, 1 = living ground, 2 = exposed soil cap.
  */
@@ -745,7 +731,7 @@ export function createPhotorealIslandGeometry({
   return geometry;
 }
 
-export interface PhotorealIslandPaint {
+interface PhotorealIslandPaint {
   /** Grass top: base colour and the highlight it blends toward. */
   grass: readonly [THREE.ColorRepresentation, THREE.ColorRepresentation];
   soil: THREE.ColorRepresentation;
