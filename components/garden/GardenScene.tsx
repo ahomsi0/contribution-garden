@@ -7,7 +7,7 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 
@@ -22,11 +22,11 @@ import type {
   GardenWalkInput,
   GardenWeather,
 } from "./types";
-import { LightweightNature } from "./LightweightNature";
 import {
   createPhotorealIslandSurfaceSampler,
   type PhotorealIslandSurfaceSampler,
 } from "./photoreal-geometry";
+import { Flora } from "./world/Flora";
 import { Island, ISLAND_SURFACE_OFFSET } from "./world/Island";
 import {
   computeGardenLayout,
@@ -34,6 +34,7 @@ import {
   type MappingInput,
 } from "./world/mapping";
 import { Meadow } from "./world/Meadow";
+import { isOutsideMeadowPond } from "./world/meadow-layout";
 import { worldPalette } from "./world/palette";
 import { SkyAndLights } from "./world/Sky";
 import { TIER_SETTINGS } from "./world/tiers";
@@ -64,23 +65,8 @@ interface GardenPalette {
   mote: string;
 }
 
-interface ScatterItem {
-  x: number;
-  z: number;
-  rotation: number;
-  scale: number;
-  variant: number;
-}
-
-interface EdgeScatterItem extends ScatterItem {
-  radius: number;
-}
-
-// Legacy fixed radius, used only by EdgeUnderstory's edge scaling until the
-// flora pass replaces it. The island itself now sizes from the layout.
-const WORLD_RADIUS = 11.5;
-const POND_X = -2.35;
-const POND_Z = 1.25;
+/** The base pond the walkthrough steers around. */
+const WALK_POND = { x: -2.35, z: 1.25, scale: 1 };
 const EMPTY_WALK_INPUT: GardenWalkInput = {
   forward: false,
   backward: false,
@@ -242,152 +228,6 @@ function seededRandom(seed: number) {
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-function isOutsidePond(x: number, z: number, padding = 1) {
-  const pondDistance =
-    ((x - POND_X) * (x - POND_X)) / (2.25 * 2.25 * padding) +
-    ((z - POND_Z) * (z - POND_Z)) / (1.45 * 1.45 * padding);
-  return pondDistance > 1;
-}
-
-function createScatter(
-  count: number,
-  seed: number,
-  radius = 7.15,
-  pondPadding = 1,
-): ScatterItem[] {
-  const random = seededRandom(seed);
-  const items: ScatterItem[] = [];
-  let attempts = 0;
-
-  while (items.length < count && attempts < count * 18) {
-    attempts += 1;
-    const angle = random() * Math.PI * 2;
-    const distance = Math.sqrt(random()) * radius;
-    const x = Math.cos(angle) * distance;
-    const z = Math.sin(angle) * distance;
-
-    if (!isOutsidePond(x, z, pondPadding)) continue;
-    if (Math.abs(z + x * 0.24 + 2.3) < 0.32 && random() > 0.18) continue;
-
-    items.push({
-      x,
-      z,
-      rotation: random() * Math.PI * 2,
-      scale: 0.72 + random() * 0.72,
-      variant: Math.floor(random() * 4),
-    });
-  }
-
-  return items;
-}
-
-function createFlowerClusters(count: number, seed: number): ScatterItem[] {
-  const random = seededRandom(seed);
-  const centers: Array<[number, number]> = [
-    [POND_X - 2.02, POND_Z + 0.16],
-    [POND_X - 0.18, POND_Z + 1.78],
-    [POND_X + 2.14, POND_Z + 0.48],
-    [3.35, -3.12],
-    [0.72, -2.42],
-  ];
-  const items: ScatterItem[] = [];
-  let attempts = 0;
-
-  while (items.length < count && attempts < count * 24) {
-    const center = centers[attempts % centers.length];
-    attempts += 1;
-    const angle = random() * Math.PI * 2;
-    const distance = 0.16 + Math.sqrt(random()) * 0.72;
-    const x = center[0] + Math.cos(angle) * distance;
-    const z = center[1] + Math.sin(angle) * distance * 0.68;
-
-    if (Math.hypot(x, z) > 7.05 || !isOutsidePond(x, z, 1.08)) continue;
-
-    items.push({
-      x,
-      z,
-      rotation: random() * Math.PI * 2,
-      scale: 0.72 + random() * 0.68,
-      variant: Math.floor(random() * 4),
-    });
-  }
-
-  return items;
-}
-
-function createEdgeScatter(
-  count: number,
-  seed: number,
-  minRadius = 5.2,
-  maxRadius = 7.25,
-): EdgeScatterItem[] {
-  const random = seededRandom(seed);
-  const items: EdgeScatterItem[] = [];
-  let attempts = 0;
-
-  while (items.length < count && attempts < count * 22) {
-    attempts += 1;
-    const angle = random() * Math.PI * 2;
-    const radius = minRadius + random() * (maxRadius - minRadius);
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
-
-    if (!isOutsidePond(x, z, 1.42)) continue;
-    if (Math.abs(z + x * 0.24 + 2.3) < 0.48 && random() > 0.14) continue;
-
-    items.push({
-      x,
-      z,
-      radius,
-      rotation: random() * Math.PI * 2,
-      scale: 0.62 + random() * 0.82,
-      variant: Math.floor(random() * 4),
-    });
-  }
-
-  return items;
-}
-
-function tupleFromVector(vector: THREE.Vector3): VectorTuple {
-  return [vector.x, vector.y, vector.z];
-}
-
-function createFlowerHeadGeometry() {
-  const positions: number[] = [];
-  const petalCount = 5;
-
-  const pushTriangle = (a: VectorTuple, b: VectorTuple, c: VectorTuple) => {
-    positions.push(...a, ...b, ...c);
-  };
-
-  for (let index = 0; index < petalCount; index += 1) {
-    const angle = (index / petalCount) * Math.PI * 2;
-    const direction = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
-    const side = new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle));
-    const base = direction.clone().multiplyScalar(0.05);
-    const middle = direction.clone().multiplyScalar(0.54);
-    const tip = direction.clone().multiplyScalar(0.98);
-    middle.y = 0.12;
-    tip.y = 0.05;
-    const left = middle.clone().addScaledVector(side, 0.3);
-    const right = middle.clone().addScaledVector(side, -0.3);
-
-    pushTriangle(tupleFromVector(base), tupleFromVector(left), tupleFromVector(middle));
-    pushTriangle(tupleFromVector(base), tupleFromVector(middle), tupleFromVector(right));
-    pushTriangle(tupleFromVector(left), tupleFromVector(tip), tupleFromVector(middle));
-    pushTriangle(tupleFromVector(middle), tupleFromVector(tip), tupleFromVector(right));
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(positions, 3),
-  );
-  geometry.computeVertexNormals();
-  geometry.computeBoundingSphere();
-  return geometry;
 }
 
 function paletteFor(season: GardenSeason, timeOfDay: GardenTimeOfDay) {
@@ -621,7 +461,7 @@ function GardenWorld({
     () => worldPalette(season, timeOfDay),
     [season, timeOfDay],
   );
-  const layout = useMemo(() => {
+  const { layout, channel } = useMemo(() => {
     const input: MappingInput = {
       days,
       visibleThrough,
@@ -639,10 +479,11 @@ function GardenWorld({
     // The island radius and pond don't depend on obstacles, so a first pass
     // tells us where the waterfall channel runs; year trees then keep off it.
     const draft = computeGardenLayout(input);
-    return computeGardenLayout({
-      ...input,
-      obstacles: waterfallChannelObstacles(draft, quality, seed),
-    });
+    const obstacles = waterfallChannelObstacles(draft, quality, seed);
+    return {
+      layout: computeGardenLayout({ ...input, obstacles }),
+      channel: obstacles,
+    };
   }, [
     days,
     density,
@@ -701,40 +542,6 @@ function GardenWorld({
         weather={weather}
         onSelect={onSelect}
       />
-      <StonePath
-        palette={palette}
-        quality={quality}
-        seed={seed + 7}
-        surfaceSampler={surfaceSampler}
-      />
-      {quality === "low" ? (
-        <>
-          <GroundDetails
-            health={health}
-            palette={palette}
-            quality={quality}
-            season={season}
-            seed={seed + 29}
-          />
-          <EdgeUnderstory
-            health={health}
-            palette={palette}
-            quality={quality}
-            season={season}
-            seed={seed + 53}
-          />
-        </>
-      ) : (
-        <LightweightNature
-          health={health}
-          quality={quality}
-          season={season}
-          seed={seed + 53}
-          surfaceOffset={ISLAND_SURFACE_OFFSET}
-          surfaceSampler={surfaceSampler}
-          showTrees={false}
-        />
-      )}
       <Trees
         layout={layout}
         palette={world}
@@ -763,31 +570,32 @@ function GardenWorld({
         visibleThrough={visibleThrough}
         onSelect={onSelect}
       />
+      <Flora
+        channel={channel}
+        days={days}
+        layout={layout}
+        palette={world}
+        quality={quality}
+        reducedMotion={reducedMotion}
+        season={season}
+        seed={seed + 233}
+        stats={stats}
+        surfaceSampler={surfaceSampler}
+        tier={tier}
+        weather={weather}
+        onSelect={onSelect}
+      />
       {quality === "low" ? (
-        <>
-          <FlowerField
-            density={density}
-            health={health}
-            palette={palette}
-            reducedMotion={reducedMotion}
-            season={season}
-            seed={seed + 233}
-            stats={stats}
-            surfaceSampler={surfaceSampler}
-            weather={weather}
-            onSelect={onSelect}
-          />
-          <Wildlife
-            density={density}
-            health={health}
-            palette={palette}
-            reducedMotion={reducedMotion}
-            season={season}
-            seed={seed + 701}
-            stats={stats}
-            timeOfDay={timeOfDay}
-          />
-        </>
+        <Wildlife
+          density={density}
+          health={health}
+          palette={palette}
+          reducedMotion={reducedMotion}
+          season={season}
+          seed={seed + 701}
+          stats={stats}
+          timeOfDay={timeOfDay}
+        />
       ) : null}
       <WeatherSystem
         density={density}
@@ -830,24 +638,6 @@ function GardenWorld({
   );
 }
 
-function useCursorHandlers() {
-  return useMemo(
-    () => ({
-      onPointerOver: (event: ThreeEvent<PointerEvent>) => {
-        event.stopPropagation();
-        const target = event.nativeEvent.target;
-        if (target instanceof HTMLElement) target.style.cursor = "pointer";
-      },
-      onPointerOut: (event: ThreeEvent<PointerEvent>) => {
-        event.stopPropagation();
-        const target = event.nativeEvent.target;
-        if (target instanceof HTMLElement) target.style.cursor = "grab";
-      },
-    }),
-    [],
-  );
-}
-
 function CelestialBody({ color }: { color: string }) {
   const radius = 1.05;
   return (
@@ -866,382 +656,6 @@ function CelestialBody({ color }: { color: string }) {
           toneMapped={false}
         />
       </mesh>
-    </group>
-  );
-}
-
-function StonePath({
-  palette,
-  quality,
-  seed,
-  surfaceSampler,
-}: {
-  palette: GardenPalette;
-  quality: GardenQuality;
-  seed: number;
-  surfaceSampler: PhotorealIslandSurfaceSampler;
-}) {
-  const mesh = useRef<THREE.InstancedMesh>(null);
-  const stones = useMemo(() => {
-    const random = seededRandom(seed);
-    return Array.from({ length: 14 }, (_, index) => {
-      const progress = index / 13;
-      const x = -6.9 + progress * 13.4;
-      const z =
-        -0.22 * x -
-        2.3 +
-        Math.sin(progress * Math.PI * 2.15) * 0.42;
-      return {
-        x: x + (random() - 0.5) * 0.18,
-        z: z + (random() - 0.5) * 0.16,
-        rotation: random() * Math.PI,
-        scale: 0.82 + random() * 0.38,
-      };
-    });
-  }, [seed]);
-
-  useLayoutEffect(() => {
-    if (!mesh.current) return;
-    const dummy = new THREE.Object3D();
-    stones.forEach((stone, index) => {
-      const surfaceY =
-        (surfaceSampler(stone.x, stone.z) ?? 0) + ISLAND_SURFACE_OFFSET;
-      dummy.position.set(stone.x, surfaceY + 0.025, stone.z);
-      dummy.rotation.set(
-        (index % 3 - 1) * 0.025,
-        stone.rotation,
-        (index % 2 ? 1 : -1) * 0.035,
-      );
-      dummy.scale.set(
-        stone.scale * 0.43,
-        stone.scale * 0.085,
-        stone.scale * 0.34,
-      );
-      dummy.updateMatrix();
-      mesh.current?.setMatrixAt(index, dummy.matrix);
-      mesh.current?.setColorAt(
-        index,
-        new THREE.Color(index % 4 === 0 ? palette.stoneLight : palette.stone),
-      );
-    });
-    mesh.current.instanceMatrix.needsUpdate = true;
-    if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
-  }, [palette.stone, palette.stoneLight, stones, surfaceSampler]);
-
-  return (
-    <instancedMesh
-      ref={mesh}
-      args={[undefined, undefined, stones.length]}
-      castShadow={quality === "high"}
-      receiveShadow
-    >
-      <dodecahedronGeometry args={[1, 0]} />
-      <meshStandardMaterial
-        flatShading
-        roughness={0.98}
-      />
-    </instancedMesh>
-  );
-}
-
-function GroundDetails({
-  health,
-  palette,
-  quality,
-  season,
-  seed,
-}: {
-  health: number;
-  palette: GardenPalette;
-  quality: GardenQuality;
-  season: GardenSeason;
-  seed: number;
-}) {
-  const mesh = useRef<THREE.InstancedMesh>(null);
-  const count = quality === "high" ? 58 : quality === "medium" ? 40 : 24;
-  const details = useMemo(
-    () => createScatter(count, seed, 7.05, 1.28),
-    [count, seed],
-  );
-  const colors = useMemo(() => {
-    const healthy = new THREE.Color(palette.foliage[2]);
-    const dry = new THREE.Color(palette.groundDry);
-    const winter = new THREE.Color(palette.stoneLight);
-    const base = dry.clone().lerp(healthy, 0.2 + health * 0.6);
-    if (season === "winter") base.lerp(winter, 0.55);
-
-    return [
-      base.clone().multiplyScalar(0.82),
-      base.clone(),
-      base.clone().lerp(new THREE.Color(palette.ground), 0.45),
-      base.clone().lerp(new THREE.Color(palette.earth), 0.28),
-    ];
-  }, [health, palette, season]);
-
-  useLayoutEffect(() => {
-    if (!mesh.current) return;
-    const dummy = new THREE.Object3D();
-    details.forEach((detail, index) => {
-      const size = 0.12 * detail.scale;
-      dummy.position.set(detail.x, 0.045 + size * 0.18, detail.z);
-      dummy.rotation.set(0, detail.rotation, 0);
-      dummy.scale.set(size * 1.35, size * 0.34, size);
-      dummy.updateMatrix();
-      mesh.current?.setMatrixAt(index, dummy.matrix);
-      mesh.current?.setColorAt(index, colors[detail.variant % colors.length]);
-    });
-    mesh.current.instanceMatrix.needsUpdate = true;
-    if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
-  }, [colors, details]);
-
-  return (
-    <instancedMesh
-      ref={mesh}
-      args={[undefined, undefined, details.length]}
-      castShadow={quality === "high"}
-      receiveShadow
-    >
-      <icosahedronGeometry args={[1, 1]} />
-      <meshStandardMaterial roughness={1} />
-    </instancedMesh>
-  );
-}
-
-function EdgeUnderstory({
-  health,
-  palette,
-  quality,
-  season,
-  seed,
-}: {
-  health: number;
-  palette: GardenPalette;
-  quality: GardenQuality;
-  season: GardenSeason;
-  seed: number;
-}) {
-  const lowerMesh = useRef<THREE.InstancedMesh>(null);
-  const upperMesh = useRef<THREE.InstancedMesh>(null);
-  const count = quality === "high" ? 54 : quality === "medium" ? 38 : 24;
-  const shrubs = useMemo(
-    () => createEdgeScatter(count, seed),
-    [count, seed],
-  );
-  const colors = useMemo(() => {
-    const dry = new THREE.Color(palette.groundDry);
-    return palette.foliage.map((value, index) => {
-      const color = dry.clone().lerp(new THREE.Color(value), 0.38 + health * 0.58);
-      if (season === "winter") {
-        color.lerp(new THREE.Color(palette.stoneLight), 0.18 + index * 0.05);
-      }
-      return color;
-    });
-  }, [health, palette, season]);
-
-  useLayoutEffect(() => {
-    if (!lowerMesh.current || !upperMesh.current) return;
-    const dummy = new THREE.Object3D();
-    shrubs.forEach((shrub, index) => {
-      const edgeScale = 0.82 + (WORLD_RADIUS - shrub.radius) * 0.08;
-      const size = shrub.scale * edgeScale;
-
-      dummy.position.set(shrub.x, 0.11 + size * 0.08, shrub.z);
-      dummy.rotation.set(0, shrub.rotation, 0);
-      dummy.scale.set(size * 0.24, size * 0.14, size * 0.2);
-      dummy.updateMatrix();
-      lowerMesh.current?.setMatrixAt(index, dummy.matrix);
-      lowerMesh.current?.setColorAt(
-        index,
-        colors[(shrub.variant + 1) % colors.length],
-      );
-
-      dummy.position.set(
-        shrub.x + Math.cos(shrub.rotation) * size * 0.08,
-        0.22 + size * 0.12,
-        shrub.z + Math.sin(shrub.rotation) * size * 0.08,
-      );
-      dummy.rotation.set(0, -shrub.rotation * 0.7, 0);
-      dummy.scale.set(size * 0.17, size * 0.2, size * 0.17);
-      dummy.updateMatrix();
-      upperMesh.current?.setMatrixAt(index, dummy.matrix);
-      upperMesh.current?.setColorAt(index, colors[shrub.variant % colors.length]);
-    });
-
-    lowerMesh.current.instanceMatrix.needsUpdate = true;
-    upperMesh.current.instanceMatrix.needsUpdate = true;
-    if (lowerMesh.current.instanceColor) {
-      lowerMesh.current.instanceColor.needsUpdate = true;
-    }
-    if (upperMesh.current.instanceColor) {
-      upperMesh.current.instanceColor.needsUpdate = true;
-    }
-  }, [colors, shrubs]);
-
-  return (
-    <group>
-      <instancedMesh
-        ref={lowerMesh}
-        args={[undefined, undefined, shrubs.length]}
-        castShadow={quality !== "low"}
-        receiveShadow
-      >
-        <sphereGeometry args={[1, 9, 6]} />
-        <meshStandardMaterial roughness={0.98} />
-      </instancedMesh>
-      <instancedMesh
-        ref={upperMesh}
-        args={[undefined, undefined, shrubs.length]}
-        castShadow={quality === "high"}
-      >
-        <sphereGeometry args={[1, 9, 6]} />
-        <meshStandardMaterial roughness={0.95} />
-      </instancedMesh>
-    </group>
-  );
-}
-
-function FlowerField({
-  density,
-  health,
-  palette,
-  reducedMotion,
-  season,
-  seed,
-  stats,
-  surfaceSampler,
-  weather,
-  onSelect,
-}: {
-  density: number;
-  health: number;
-  palette: GardenPalette;
-  reducedMotion: boolean;
-  season: GardenSeason;
-  seed: number;
-  stats: GardenStats;
-  surfaceSampler: PhotorealIslandSurfaceSampler;
-  weather: GardenWeather;
-  onSelect?: (selection: GardenSelection | null) => void;
-}) {
-  const stems = useRef<THREE.InstancedMesh>(null);
-  const heads = useRef<THREE.InstancedMesh>(null);
-  const centers = useRef<THREE.InstancedMesh>(null);
-  const group = useRef<THREE.Group>(null);
-  const cursorHandlers = useCursorHandlers();
-  const headGeometry = useMemo(() => createFlowerHeadGeometry(), []);
-  const seasonFactor =
-    season === "spring" ? 1.3 : season === "summer" ? 1 : season === "autumn" ? 0.62 : 0.24;
-  const count = Math.max(
-    3,
-    Math.round(
-      (4 + Math.min(116, Math.sqrt(Math.max(0, stats.issues)) * 10.5)) *
-        seasonFactor *
-        density *
-        (0.5 + health * 0.5),
-    ),
-  );
-  const flowers = useMemo(
-    () => createFlowerClusters(count, seed),
-    [count, seed],
-  );
-
-  useEffect(() => () => headGeometry.dispose(), [headGeometry]);
-
-  useLayoutEffect(() => {
-    if (!stems.current || !heads.current || !centers.current) return;
-    const dummy = new THREE.Object3D();
-    flowers.forEach((flower, index) => {
-      const height =
-        (0.2 + flower.scale * 0.11) * (season === "winter" ? 0.68 : 1);
-      const surfaceY =
-        (surfaceSampler(flower.x, flower.z) ?? 0) + ISLAND_SURFACE_OFFSET;
-
-      dummy.position.set(flower.x, surfaceY + height * 0.5, flower.z);
-      dummy.rotation.set(0, flower.rotation, 0);
-      dummy.scale.set(0.68, height, 0.68);
-      dummy.updateMatrix();
-      stems.current?.setMatrixAt(index, dummy.matrix);
-      stems.current?.setColorAt(
-        index,
-        new THREE.Color(index % 3 === 0 ? palette.foliage[2] : palette.foliage[1]),
-      );
-
-      dummy.position.set(flower.x, surfaceY + height + 0.02, flower.z);
-      dummy.rotation.set(0.15, flower.rotation, flower.rotation * 0.06);
-      dummy.scale.setScalar(0.1 + flower.scale * 0.055);
-      dummy.scale.y *= 0.58;
-      dummy.updateMatrix();
-      heads.current?.setMatrixAt(index, dummy.matrix);
-      heads.current?.setColorAt(index, new THREE.Color(palette.flowers[flower.variant]));
-
-      dummy.position.set(flower.x, surfaceY + height + 0.045, flower.z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.setScalar(0.037 + flower.scale * 0.012);
-      dummy.updateMatrix();
-      centers.current?.setMatrixAt(index, dummy.matrix);
-    });
-
-    for (const mesh of [stems.current, heads.current, centers.current]) {
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    }
-  }, [flowers, palette.flowers, palette.foliage, season, surfaceSampler]);
-
-  useFrame((state) => {
-    if (!group.current || reducedMotion) return;
-    const wind = weather === "wind" ? 1 : weather === "rain" ? 0.55 : 0.25;
-    group.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.55 + 1.4) * 0.006 * wind;
-  });
-
-  const selectFlower = (event: ThreeEvent<MouseEvent>) => {
-    event.stopPropagation();
-    const instanceId = event.instanceId ?? 0;
-    const flower = flowers[instanceId] ?? flowers[0];
-    if (!flower) return;
-    const species = ["Wild rose", "Sunbell", "Violet star", "Moon daisy"];
-    const groundY =
-      (surfaceSampler(flower.x, flower.z) ?? 0) + ISLAND_SURFACE_OFFSET;
-
-    onSelect?.({
-      kind: "flower",
-      id: `issue-flower-${instanceId}`,
-      title: species[flower.variant],
-      subtitle: "Issue border",
-      description:
-        "Current issue activity seeds clustered borders along the pond and walking path.",
-      accent: palette.flowers[flower.variant],
-      worldPosition: [flower.x, groundY + 0.55, flower.z],
-      count: stats.issues,
-      details: [
-        { label: "Issue habitat total", value: stats.issues },
-        { label: "Species", value: species[flower.variant] },
-        { label: "Season", value: season[0].toUpperCase() + season.slice(1) },
-      ],
-    });
-  };
-
-  return (
-    <group ref={group}>
-      <instancedMesh ref={stems} args={[undefined, undefined, flowers.length]} castShadow>
-        <cylinderGeometry args={[0.022, 0.03, 1, 5]} />
-        <meshStandardMaterial roughness={0.88} />
-      </instancedMesh>
-      <instancedMesh
-        ref={heads}
-        args={[headGeometry, undefined, flowers.length]}
-        castShadow
-        onClick={selectFlower}
-        {...cursorHandlers}
-      >
-        <meshStandardMaterial
-          roughness={0.76}
-          side={THREE.DoubleSide}
-        />
-      </instancedMesh>
-      <instancedMesh ref={centers} args={[undefined, undefined, flowers.length]} castShadow>
-        <sphereGeometry args={[1, 6, 4]} />
-        <meshStandardMaterial color="#f6cb62" emissive="#7b4c16" emissiveIntensity={0.05} />
-      </instancedMesh>
     </group>
   );
 }
@@ -2115,7 +1529,7 @@ function GardenWalkthroughControls({
         return (
           sampledHeight !== null &&
           Math.hypot(x, z) <= islandRadius - 0.72 &&
-          isOutsidePond(x, z, 1.28) &&
+          isOutsideMeadowPond(x, z, WALK_POND, 1.28) &&
           Math.hypot(x - 2.62, z - 0.48) > 1.24 &&
           Math.abs(sampledHeight + ISLAND_SURFACE_OFFSET - currentGround) < 0.46
         );
