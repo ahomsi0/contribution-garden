@@ -11,7 +11,7 @@ interface UserPageProps {
 
 async function resolve({ params, searchParams }: UserPageProps) {
   const [{ login }, query] = await Promise.all([params, searchParams]);
-  const handle = normalizeGardenHandle(decodeURIComponent(login), "github");
+  const handle = normalizeGardenHandle(login, "github");
   const from = typeof query.from === "string" ? findCountry(query.from) : undefined;
   return { handle, from };
 }

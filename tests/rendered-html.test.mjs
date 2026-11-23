@@ -961,3 +961,13 @@ test("each page declares its own canonical URL", async () => {
   assert.match(await canonicalOf("/gitlab?user=john.doe"), /\/gitlab\?user=john\.doe$/);
   assert.match(await canonicalOf("/"), /\/$/);
 });
+
+test("returns 404 rather than 500 for a malformed login on /u/", async () => {
+  const app = await worker();
+  const response = await app.fetch(
+    new Request("http://localhost/u/a%25", { headers: { accept: "text/html" } }),
+    environment,
+    context,
+  );
+  assert.equal(response.status, 404);
+});
