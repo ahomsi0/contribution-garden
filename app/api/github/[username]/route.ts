@@ -20,6 +20,7 @@ import {
 } from "@/lib/github/graphql";
 import { contributionHistoryQuery } from "@/lib/github/history-query";
 import { createMockGitHubData } from "@/lib/mock-github";
+import { createInflight } from "@/lib/inflight";
 import { logger } from "@/lib/logger";
 import { checkRateLimit, clientIpFromRequest } from "@/lib/rate-limit";
 
@@ -169,7 +170,7 @@ interface PublicGardenFailure {
 type PublicGardenCacheStatus = "hit" | "miss" | "stale";
 
 const publicGardenCache = new Map<string, PublicGardenCacheEntry>();
-const publicGardenLoads = new Map<string, Promise<GitHubGardenData>>();
+const publicGardenLoads = createInflight<GitHubGardenData>(60_000);
 const publicGardenFailures = new Map<string, PublicGardenFailure>();
 
 interface RawLanguageEdge {
@@ -593,56 +594,50 @@ async function loadPublicGitHubGarden(
     return { data: cached.data, cacheStatus: "hit" };
   }
 
-  let pending = publicGardenLoads.get(cacheKey);
-
-  if (!pending) {
-    // Negative-cache window: do not hammer GitHub again immediately after a
-    // failure. Prefer serving a stale copy when one exists.
-    const failure = publicGardenFailures.get(cacheKey);
-    if (failure && failure.retryAt > Date.now()) {
-      if (cached && cached.staleUntil > Date.now()) {
-        publicGardenCache.delete(cacheKey);
-        publicGardenCache.set(cacheKey, cached);
-        return { data: staleCopy(cached), cacheStatus: "stale" };
-      }
-      throw failure.error;
+  // Negative-cache window: do not hammer GitHub again immediately after a
+  // failure. Prefer serving a stale copy when one exists. Skipped while a
+  // load is already in flight so concurrent callers share it.
+  const failure = publicGardenFailures.get(cacheKey);
+  if (failure && failure.retryAt > Date.now()) {
+    if (cached && cached.staleUntil > Date.now()) {
+      publicGardenCache.delete(cacheKey);
+      publicGardenCache.set(cacheKey, cached);
+      return { data: staleCopy(cached), cacheStatus: "stale" };
     }
-
-    pending = loadGitHubGarden(username, authorization).then(
-      (data) => {
-        const cachedAt = Date.now();
-        publicGardenCache.set(cacheKey, {
-          data,
-          freshUntil: cachedAt + PUBLIC_GARDEN_CACHE_TTL_MS,
-          staleUntil: cachedAt + PUBLIC_GARDEN_STALE_TTL_MS,
-        });
-        publicGardenFailures.delete(cacheKey);
-        prunePublicGardenCache();
-        return data;
-      },
-      (error: unknown) => {
-        const requestError =
-          error instanceof GitHubRequestError
-            ? error
-            : new GitHubRequestError(
-                "The garden could not be loaded.",
-                502,
-              );
-        // Back off briefly for every failure shape — outages, rate limits,
-        // and unknown users alike — so bursts of traffic during a GitHub
-        // incident cannot amplify into sustained upstream load.
-        publicGardenFailures.set(cacheKey, {
-          error: requestError,
-          retryAt: Date.now() + NEGATIVE_CACHE_TTL_MS,
-        });
-        throw requestError;
-      },
-    );
-    publicGardenLoads.set(cacheKey, pending);
+    throw failure.error;
   }
 
   try {
-    return { data: await pending, cacheStatus: "miss" };
+    const data = await publicGardenLoads.run(cacheKey, () =>
+      loadGitHubGarden(username, authorization).then(
+        (loaded) => {
+          const cachedAt = Date.now();
+          publicGardenCache.set(cacheKey, {
+            data: loaded,
+            freshUntil: cachedAt + PUBLIC_GARDEN_CACHE_TTL_MS,
+            staleUntil: cachedAt + PUBLIC_GARDEN_STALE_TTL_MS,
+          });
+          publicGardenFailures.delete(cacheKey);
+          prunePublicGardenCache();
+          return loaded;
+        },
+        (error: unknown) => {
+          const requestError =
+            error instanceof GitHubRequestError
+              ? error
+              : new GitHubRequestError("The garden could not be loaded.", 502);
+          // Back off briefly for every failure shape — outages, rate limits,
+          // and unknown users alike — so bursts of traffic during a GitHub
+          // incident cannot amplify into sustained upstream load.
+          publicGardenFailures.set(cacheKey, {
+            error: requestError,
+            retryAt: Date.now() + NEGATIVE_CACHE_TTL_MS,
+          });
+          throw requestError;
+        },
+      ),
+    );
+    return { data, cacheStatus: "miss" };
   } catch (error) {
     if (cached && cached.staleUntil > Date.now()) {
       // Re-insert so a frequently requested entry survives LRU eviction even
@@ -652,10 +647,6 @@ async function loadPublicGitHubGarden(
       return { data: staleCopy(cached), cacheStatus: "stale" };
     }
     throw error;
-  } finally {
-    if (publicGardenLoads.get(cacheKey) === pending) {
-      publicGardenLoads.delete(cacheKey);
-    }
   }
 }
 

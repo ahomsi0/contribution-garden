@@ -1,3 +1,4 @@
+import { createInflight } from "@/lib/inflight";
 import { logger } from "@/lib/logger";
 import {
   isCountrySnapshot,
@@ -11,7 +12,7 @@ const ERROR_TTL_MS = 30 * 1_000;
 const FETCH_TIMEOUT_MS = 5_000;
 const cache = new Map<string, { value: unknown; expires: number }>();
 const lastGood = new Map<string, unknown>();
-const inflight = new Map<string, Promise<unknown | null>>();
+const inflight = createInflight<unknown | null>(10_000);
 
 export function clearRankingsCache() {
   cache.clear();
@@ -52,12 +53,7 @@ async function readJson(pathname: string): Promise<unknown | null> {
   const cached = cache.get(url);
   if (cached && cached.expires > Date.now()) return cached.value;
 
-  let pending = inflight.get(url);
-  if (!pending) {
-    pending = fetchJson(url, pathname).finally(() => inflight.delete(url));
-    inflight.set(url, pending);
-  }
-  return pending;
+  return inflight.run(url, () => fetchJson(url, pathname));
 }
 
 export async function getRankingsIndex(): Promise<RankingsIndex | null> {
