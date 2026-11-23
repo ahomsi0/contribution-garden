@@ -121,6 +121,22 @@ test("the camera sits 30-45° of azimuth off the waterfall at a 30-35° elevatio
   }
 });
 
+test("the waterfall shows on the right of the frame, clear of the stats panel", () => {
+  for (const degrees of [0, 10, 145, 160, 200, 350]) {
+    const waterfall = degrees * DEG;
+    for (const size of [small, large]) {
+      const framing = cameraFraming(size.radius, size.top, waterfall);
+      const rim: Vec3 = [
+        Math.cos(waterfall) * size.radius,
+        GROUND,
+        Math.sin(waterfall) * size.radius,
+      ];
+      const [horizontal] = framingViewAngles(framing, rim);
+      assert.ok(horizontal > 5, `waterfall at ${horizontal.toFixed(1)}° (left of centre)`);
+    }
+  }
+});
+
 test("the same inputs give the same framing; different inputs move it", () => {
   const a = cameraFraming(11, 7, WATERFALL);
   const b = cameraFraming(11, 7, WATERFALL);

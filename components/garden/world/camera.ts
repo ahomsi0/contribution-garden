@@ -55,7 +55,11 @@ export interface FramingOptions {
 export const CAMERA_FOV = 42;
 /** Camera elevation above the target. */
 export const CAMERA_ELEVATION = (32 * Math.PI) / 180;
-/** How far the camera's azimuth sits from the waterfall's. */
+/**
+ * How far the camera's azimuth sits from the waterfall's. The camera turns
+ * past the waterfall so it shows on the right of the frame: on a desktop the
+ * stats panel covers the left.
+ */
 export const WATERFALL_OFFSET = (38 * Math.PI) / 180;
 /**
  * How much of the frame the page UI covers. On a wide screen the top bar and
@@ -163,7 +167,7 @@ function rimPoints(rimRadiusAt: (angle: number) => number): Vec3[] {
  * pouring over the rim at `waterfallAzimuth` (radians, atan2(z, x)).
  *
  * The camera keeps a fixed elevation, turns so the waterfall sits about 38°
- * off the view axis, and then takes the closest distance (and the target
+ * to the right of the view axis, and then takes the closest distance (and the target
  * height that allows it) at which the whole island fits across the frame,
  * the near rim clears the bottom bar and every crown stays under the top bar.
  */
@@ -188,7 +192,7 @@ export function cameraFraming(
   const sideLimit = halfWidth * 0.97;
   const great = options.greatTree ?? GREAT_TREE_POSITION;
 
-  const azimuth = waterfallAzimuth - WATERFALL_OFFSET;
+  const azimuth = waterfallAzimuth + WATERFALL_OFFSET;
   const elevation = CAMERA_ELEVATION;
   const pose = poseFor(azimuth, elevation);
 
