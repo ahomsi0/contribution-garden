@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { COUNTRIES } from "@/lib/rankings/countries";
-import { formatCount, formatUpdated } from "@/lib/rankings/format";
+import { avatarAt, formatCount, formatUpdated } from "@/lib/rankings/format";
 import type { RankingsIndex } from "@/lib/rankings/snapshot";
 
 export function CountryGrid({ index }: { index: RankingsIndex | null }) {
@@ -19,7 +19,7 @@ export function CountryGrid({ index }: { index: RankingsIndex | null }) {
                 {entry?.leader ? (
                   <span className="country-card__leader">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={`${entry.leader.avatarUrl}&s=48`} alt="" width={24} height={24} loading="lazy" />
+                    <img src={avatarAt(entry.leader.avatarUrl, 48)} alt="" width={24} height={24} loading="lazy" />
                     @{entry.leader.login} · {formatCount(entry.leader.score)}
                   </span>
                 ) : (

@@ -25,3 +25,13 @@ export function isStale(iso: string, now: Date = new Date()): boolean {
 export function formatCount(value: number): string {
   return value.toLocaleString("en-US");
 }
+
+export function avatarAt(url: string, size: number): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("s", String(size));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}

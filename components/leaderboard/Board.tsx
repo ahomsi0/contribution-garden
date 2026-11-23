@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useDeferredValue, useMemo, useState } from "react";
-import { formatCount } from "@/lib/rankings/format";
+import { avatarAt, formatCount } from "@/lib/rankings/format";
 import type { RankedUser } from "@/lib/rankings/snapshot";
 import { YearBeds } from "./YearBeds";
 
@@ -47,7 +47,7 @@ export function Board({ slug, users, scaleMax }: BoardProps) {
               <Link className="board__row" href={`/u/${user.login}?from=${slug}`}>
                 <span className="board__rank">{user.rank}</span>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img className="board__avatar" src={`${user.avatarUrl}&s=64`} alt="" width={32} height={32} loading="lazy" />
+                <img className="board__avatar" src={avatarAt(user.avatarUrl, 64)} alt="" width={32} height={32} loading="lazy" />
                 <span className="board__name">
                   {user.name ?? user.login}
                   <small>@{user.login}</small>

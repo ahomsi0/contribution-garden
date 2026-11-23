@@ -31,3 +31,20 @@ test("staleness boundary is exactly 48 hours", () => {
   assert.equal(isStale("2026-11-21T12:00:00.000Z", now), false);
   assert.equal(isStale("2026-11-21T11:59:00.000Z", now), true);
 });
+
+test("avatarAt sets the size on urls with or without a query", async () => {
+  const { avatarAt } = await import("@/lib/rankings/format");
+  assert.equal(
+    avatarAt("https://avatars.githubusercontent.com/u/1?v=4", 64),
+    "https://avatars.githubusercontent.com/u/1?v=4&s=64",
+  );
+  assert.equal(
+    avatarAt("https://avatars.githubusercontent.com/u/1", 48),
+    "https://avatars.githubusercontent.com/u/1?s=48",
+  );
+  assert.equal(
+    avatarAt("https://avatars.githubusercontent.com/u/1?s=460&v=4", 64),
+    "https://avatars.githubusercontent.com/u/1?s=64&v=4",
+  );
+  assert.equal(avatarAt("not a url", 64), "not a url");
+});
