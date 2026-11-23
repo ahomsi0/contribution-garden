@@ -32,6 +32,7 @@ import {
 } from "./photoreal-geometry";
 import { Island, ISLAND_SURFACE_OFFSET } from "./world/Island";
 import { computeGardenLayout } from "./world/mapping";
+import { Meadow } from "./world/Meadow";
 import { worldPalette } from "./world/palette";
 import { SkyAndLights } from "./world/Sky";
 import { TIER_SETTINGS } from "./world/tiers";
@@ -77,18 +78,11 @@ interface EdgeScatterItem extends ScatterItem {
   radius: number;
 }
 
-interface ContributionPlantItem extends ScatterItem {
-  dayIndex: number;
-  level: number;
-}
-
 // Legacy fixed radius, used only by EdgeUnderstory's edge scaling until the
 // flora pass replaces it. The island itself now sizes from the layout.
 const WORLD_RADIUS = 11.5;
 const POND_X = -2.35;
 const POND_Z = 1.25;
-const CONTRIBUTION_BED_START = -Math.PI * 0.9;
-const CONTRIBUTION_BED_LENGTH = Math.PI * 1.5;
 const EMPTY_WALK_INPUT: GardenWalkInput = {
   forward: false,
   backward: false,
@@ -291,87 +285,6 @@ function createScatter(
   return items;
 }
 
-function createContributionPlantings(
-  days: GardenDay[],
-  density: number,
-  seed: number,
-  visibleThrough?: string,
-): ContributionPlantItem[] {
-  if (days.length === 0) return [];
-
-  const years = Array.from(
-    new Set(days.map((day) => Number(day.date.slice(0, 4)))),
-  ).sort((a, b) => a - b);
-  const yearSlots = new Map(years.map((year, index) => [year, index]));
-  const ringSpacing =
-    years.length <= 1 ? 0 : Math.min(0.62, 3.55 / (years.length - 1));
-  const items: ContributionPlantItem[] = [];
-
-  days.forEach((day, dayIndex) => {
-    if (visibleThrough && day.date > visibleThrough) return;
-
-    const year = Number(day.date.slice(0, 4));
-    const yearSlot = yearSlots.get(year) ?? 0;
-    const startOfYear = Date.UTC(year, 0, 1);
-    const currentDay = Date.parse(`${day.date}T00:00:00Z`);
-    const dayOfYear = Math.max(
-      0,
-      Math.round((currentDay - startOfYear) / 86_400_000),
-    );
-    const daysInYear =
-      Date.UTC(year + 1, 0, 1) - startOfYear === 366 * 86_400_000 ? 366 : 365;
-    const progress = dayOfYear / Math.max(1, daysInYear - 1);
-    const angle =
-      CONTRIBUTION_BED_START +
-      progress * CONTRIBUTION_BED_LENGTH +
-      yearSlot * 0.012;
-    const radius = 3.12 + yearSlot * ringSpacing;
-    const level = clamp(Math.round(day.level), 0, 4);
-    const random = seededRandom(hashString(`${seed}:${day.date}`));
-    const bladeCount =
-      level === 0
-        ? 0
-        : Math.max(1, Math.round((0.7 + level * 0.65) * density));
-
-    for (let bladeIndex = 0; bladeIndex < bladeCount; bladeIndex += 1) {
-      const tangential =
-        (random() - 0.5) * (0.18 + level * 0.045);
-      const radial =
-        (random() - 0.5) * (0.16 + level * 0.04);
-      let localRadius = radius + radial;
-      let x =
-        Math.cos(angle) * localRadius - Math.sin(angle) * tangential;
-      let z =
-        Math.sin(angle) * localRadius + Math.cos(angle) * tangential;
-      const pathDelta = z + x * 0.24 + 2.3;
-      if (Math.abs(pathDelta) < 0.42) {
-        z +=
-          (0.42 - Math.abs(pathDelta)) * (pathDelta >= 0 ? 1 : -1);
-      }
-      if (!isOutsidePond(x, z, 1.55)) {
-        localRadius += 0.72;
-        x = Math.cos(angle) * localRadius - Math.sin(angle) * tangential;
-        z = Math.sin(angle) * localRadius + Math.cos(angle) * tangential;
-      }
-
-      items.push({
-        x,
-        z,
-        rotation: random() * Math.PI * 2,
-        scale:
-          level === 0
-            ? 0.3 + random() * 0.14
-            : 0.5 + level * 0.12 + random() * 0.22,
-        variant: Math.max(0, level - 1),
-        dayIndex,
-        level,
-      });
-    }
-  });
-
-  return items;
-}
-
 function createFlowerClusters(count: number, seed: number): ScatterItem[] {
   const random = seededRandom(seed);
   const centers: Array<[number, number]> = [
@@ -473,59 +386,6 @@ function createEdgeScatter(
   }
 
   return items;
-}
-
-function createGrassBladeGeometry(quality: GardenQuality) {
-  const segments = quality === "low" ? 2 : 3;
-  const positions: number[] = [];
-  const uvs: number[] = [];
-
-  const pushVertex = (x: number, y: number, z: number, u: number, v: number) => {
-    positions.push(x, y, z);
-    uvs.push(u, v);
-  };
-
-  for (const rotation of [0, Math.PI / 2, Math.PI / 4]) {
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    const points: Array<{ left: VectorTuple; right: VectorTuple; v: number }> = [];
-
-    for (let index = 0; index <= segments; index += 1) {
-      const progress = index / segments;
-      const width = 0.115 * Math.pow(1 - progress, 1.35) + 0.006;
-      const bend = Math.sin(progress * Math.PI * 0.55) * 0.11;
-      const centerX = cos * bend;
-      const centerZ = sin * bend;
-      const sideX = -sin * width;
-      const sideZ = cos * width;
-      points.push({
-        left: [centerX + sideX, progress, centerZ + sideZ],
-        right: [centerX - sideX, progress, centerZ - sideZ],
-        v: progress,
-      });
-    }
-
-    for (let index = 0; index < segments; index += 1) {
-      const lower = points[index];
-      const upper = points[index + 1];
-      pushVertex(...lower.left, 0, lower.v);
-      pushVertex(...lower.right, 1, lower.v);
-      pushVertex(...upper.left, 0, upper.v);
-      pushVertex(...lower.right, 1, lower.v);
-      pushVertex(...upper.right, 1, upper.v);
-      pushVertex(...upper.left, 0, upper.v);
-    }
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(positions, 3),
-  );
-  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.computeVertexNormals();
-  geometry.computeBoundingSphere();
-  return geometry;
 }
 
 function createFlowerHeadGeometry() {
@@ -960,24 +820,17 @@ function GardenWorld({
         />
       )}
 
-      {quality === "low" ? (
-        <ContributionBedRibbons
-          days={days}
-          health={health}
-          palette={palette}
-          visibleThrough={visibleThrough}
-        />
-      ) : null}
-      <GrassMeadow
+      <Meadow
         days={days}
-        density={density}
-        health={health}
-        palette={palette}
+        layout={layout}
+        palette={world}
         quality={quality}
         reducedMotion={reducedMotion}
+        season={season}
         seed={seed + 101}
         stats={stats}
         surfaceSampler={surfaceSampler}
+        tier={tier}
         weather={weather}
         visibleThrough={visibleThrough}
         onSelect={onSelect}
@@ -1330,312 +1183,6 @@ function EdgeUnderstory({
       </instancedMesh>
     </group>
   );
-}
-
-function ContributionBedRibbons({
-  days,
-  health,
-  palette,
-  visibleThrough,
-}: {
-  days: GardenDay[];
-  health: number;
-  palette: GardenPalette;
-  visibleThrough?: string;
-}) {
-  const years = useMemo(
-    () =>
-      Array.from(
-        new Set(days.map((day) => Number(day.date.slice(0, 4)))),
-      ).sort((a, b) => a - b),
-    [days],
-  );
-  const ringSpacing =
-    years.length <= 1 ? 0 : Math.min(0.62, 3.55 / (years.length - 1));
-  const visibleYear = Number((visibleThrough ?? "9999").slice(0, 4));
-  const soilColors = useMemo(() => {
-    const earth = new THREE.Color(palette.earth);
-    const dry = new THREE.Color(palette.groundDry);
-    return [
-      `#${earth.clone().lerp(dry, 0.2 + health * 0.12).getHexString()}`,
-      `#${earth.clone().lerp(dry, 0.34 + health * 0.1).getHexString()}`,
-    ];
-  }, [health, palette.earth, palette.groundDry]);
-
-  return (
-    <group position={[0, 0.018, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      {years.map((year, index) => {
-        if (year > visibleYear) return null;
-        const radius = 3.12 + index * ringSpacing;
-        return (
-          <mesh key={year} receiveShadow>
-            <ringGeometry
-              args={[
-                radius - 0.13,
-                radius + 0.13,
-                128,
-                1,
-                CONTRIBUTION_BED_START + index * 0.012,
-                CONTRIBUTION_BED_LENGTH,
-              ]}
-            />
-            <meshStandardMaterial
-              color={soilColors[index % soilColors.length]}
-              opacity={0.5}
-              polygonOffset
-              polygonOffsetFactor={1}
-              roughness={1}
-              transparent
-            />
-          </mesh>
-        );
-      })}
-    </group>
-  );
-}
-
-function GrassMeadow({
-  days,
-  density,
-  health,
-  palette,
-  quality,
-  reducedMotion,
-  seed,
-  stats,
-  surfaceSampler,
-  weather,
-  visibleThrough,
-  onSelect,
-}: {
-  days: GardenDay[];
-  density: number;
-  health: number;
-  palette: GardenPalette;
-  quality: GardenQuality;
-  reducedMotion: boolean;
-  seed: number;
-  stats: GardenStats;
-  surfaceSampler: PhotorealIslandSurfaceSampler;
-  weather: GardenWeather;
-  visibleThrough?: string;
-  onSelect?: (selection: GardenSelection | null) => void;
-}) {
-  const mesh = useRef<THREE.InstancedMesh>(null);
-  const patchMesh = useRef<THREE.InstancedMesh>(null);
-  const group = useRef<THREE.Group>(null);
-  const cursorHandlers = useCursorHandlers();
-  const bladeGeometry = useMemo(
-    () => createGrassBladeGeometry(quality),
-    [quality],
-  );
-  const grass = useMemo<ContributionPlantItem[]>(() => {
-    if (days.length > 0) {
-      return createContributionPlantings(days, density, seed, visibleThrough);
-    }
-
-    const count = Math.round(
-      (55 + Math.min(420, Math.sqrt(Math.max(0, stats.commits)) * 8.5)) *
-        density,
-    );
-    return createScatter(count, seed, 7.1, 1.08).map((item) => ({
-      ...item,
-      dayIndex: -1,
-      level: 2,
-    }));
-  }, [days, density, seed, stats.commits, visibleThrough]);
-  const colors = useMemo(() => {
-    const dormant = new THREE.Color(palette.groundDry);
-    return [
-      dormant.clone().multiplyScalar(0.76),
-      ...palette.foliage.map((color, index) =>
-        dormant
-          .clone()
-          .lerp(
-            new THREE.Color(color),
-            0.38 + health * 0.48 + index * 0.035,
-          ),
-      ),
-    ];
-  }, [health, palette.foliage, palette.groundDry]);
-  const weeklyPatches = useMemo(() => {
-    if (days.length === 0 || quality !== "high") return [];
-    const patches: Array<{
-      x: number;
-      z: number;
-      scale: number;
-      rotation: number;
-      level: number;
-    }> = [];
-
-    for (let start = 0; start < days.length; start += 7) {
-      const end = Math.min(days.length, start + 7);
-      const weekDays = days
-        .slice(start, end)
-        .filter((day) => !visibleThrough || day.date <= visibleThrough);
-      const weekPlants = grass.filter(
-        (plant) => plant.dayIndex >= start && plant.dayIndex < end,
-      );
-      if (weekPlants.length === 0 || weekDays.length === 0) continue;
-      const contributionCount = weekDays.reduce(
-        (total, day) => total + day.count,
-        0,
-      );
-      if (contributionCount === 0) continue;
-      const random = seededRandom(hashString(`${seed}:week:${start}`));
-      patches.push({
-        x:
-          weekPlants.reduce((total, plant) => total + plant.x, 0) /
-          weekPlants.length,
-        z:
-          weekPlants.reduce((total, plant) => total + plant.z, 0) /
-          weekPlants.length,
-        scale: clamp(0.34 + Math.sqrt(contributionCount) * 0.045, 0.36, 0.82),
-        rotation: random() * Math.PI,
-        level: clamp(
-          Math.max(...weekDays.map((day) => Math.round(day.level))),
-          1,
-          4,
-        ),
-      });
-    }
-    return patches;
-  }, [days, grass, quality, seed, visibleThrough]);
-
-  useEffect(() => () => bladeGeometry.dispose(), [bladeGeometry]);
-
-  useLayoutEffect(() => {
-    if (!mesh.current) return;
-    const dummy = new THREE.Object3D();
-    grass.forEach((blade, index) => {
-      const height =
-        blade.level === 0
-          ? 0.025 + blade.scale * 0.035
-          : (0.08 + blade.scale * 0.17) * (0.84 + health * 0.24);
-      const surfaceY =
-        (surfaceSampler(blade.x, blade.z) ?? 0) + ISLAND_SURFACE_OFFSET;
-      dummy.position.set(blade.x, surfaceY + 0.012, blade.z);
-      dummy.rotation.set(
-        (blade.variant - 1.5) * 0.025,
-        blade.rotation,
-        (blade.variant % 2 ? 1 : -1) * 0.035,
-      );
-      dummy.scale.set(
-        0.26 + blade.scale * 0.1,
-        height,
-        0.26 + blade.scale * 0.09,
-      );
-      dummy.updateMatrix();
-      mesh.current?.setMatrixAt(index, dummy.matrix);
-      mesh.current?.setColorAt(index, colors[blade.level]);
-    });
-    mesh.current.instanceMatrix.needsUpdate = true;
-    if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
-
-    weeklyPatches.forEach((patch, index) => {
-      const surfaceY =
-        (surfaceSampler(patch.x, patch.z) ?? 0) + ISLAND_SURFACE_OFFSET;
-      dummy.position.set(patch.x, surfaceY + 0.014, patch.z);
-      dummy.rotation.set(-Math.PI / 2, 0, patch.rotation);
-      dummy.scale.set(patch.scale, patch.scale * 0.62, 1);
-      dummy.updateMatrix();
-      patchMesh.current?.setMatrixAt(index, dummy.matrix);
-      patchMesh.current?.setColorAt(index, colors[patch.level]);
-    });
-    if (patchMesh.current) {
-      patchMesh.current.instanceMatrix.needsUpdate = true;
-      if (patchMesh.current.instanceColor) {
-        patchMesh.current.instanceColor.needsUpdate = true;
-      }
-    }
-  }, [colors, grass, health, surfaceSampler, weeklyPatches]);
-
-  useFrame((state) => {
-    if (!group.current || reducedMotion) return;
-    const wind = weather === "wind" ? 1 : weather === "rain" ? 0.62 : 0.32;
-    group.current.rotation.z = Math.sin(state.clock.elapsedTime * 1.15) * 0.004 * wind;
-    group.current.rotation.x = Math.cos(state.clock.elapsedTime * 0.82) * 0.002 * wind;
-  });
-
-  const selectGrass = (event: ThreeEvent<MouseEvent>) => {
-    event.stopPropagation();
-    const instanceId = event.instanceId ?? 0;
-    const item = grass[instanceId] ?? grass[0];
-    if (!item) return;
-    const day = item.dayIndex >= 0 ? days[item.dayIndex] : undefined;
-    const contributionCount = day?.count ?? stats.commits;
-    const title = day ? formatGardenDate(day.date) : "Commit meadow";
-    const repositoryText = day
-      ? day.repositories?.length
-        ? day.repositories.join(", ")
-        : undefined
-      : `${stats.repositories} repositories feed this habitat`;
-    const groundY =
-      (surfaceSampler(item.x, item.z) ?? 0) + ISLAND_SURFACE_OFFSET;
-
-    onSelect?.({
-      kind: "contribution",
-      id: day ? `day-${day.date}` : `meadow-${instanceId}`,
-      title,
-      subtitle: day ? "Daily activity plot" : "Commit meadow",
-      description: day
-        ? contributionCount > 0
-          ? `${contributionCount} contribution${contributionCount === 1 ? "" : "s"} grew this plot in the ${day.date.slice(0, 4)} annual bed.`
-          : "A quiet plot preserves the gap between active days."
-        : "Every commit adds another living detail to this meadow.",
-      accent: `#${colors[item.level].getHexString()}`,
-      worldPosition: [item.x, groundY + 0.3, item.z],
-      date: day?.date,
-      count: contributionCount,
-      repositories: day?.repositories,
-      details: [
-        ...(day ? [{ label: "Date", value: day.date }] : []),
-        { label: day ? "Contributions" : "Commits", value: contributionCount },
-        ...(day ? [{ label: "Intensity", value: `${clamp(day.level, 0, 4)}/4` }] : []),
-        ...(repositoryText ? [{ label: "Repositories", value: repositoryText }] : []),
-      ],
-    });
-  };
-
-  return (
-    <group ref={group}>
-      <instancedMesh
-        ref={patchMesh}
-        args={[undefined, undefined, weeklyPatches.length]}
-        receiveShadow
-      >
-        <circleGeometry args={[1, 12]} />
-        <meshStandardMaterial
-          polygonOffset
-          polygonOffsetFactor={-1}
-          roughness={1}
-        />
-      </instancedMesh>
-      <instancedMesh
-        ref={mesh}
-        args={[bladeGeometry, undefined, grass.length]}
-        castShadow={quality === "high" && grass.length < 1400}
-        receiveShadow
-        onClick={selectGrass}
-        {...cursorHandlers}
-      >
-        <meshBasicMaterial
-          side={THREE.DoubleSide}
-          toneMapped={false}
-        />
-      </instancedMesh>
-    </group>
-  );
-}
-
-function formatGardenDate(value: string) {
-  const date = new Date(`${value}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 function FlowerField({
