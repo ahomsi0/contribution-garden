@@ -50,6 +50,23 @@ test("builds ranked public and candidate snapshots", async () => {
   assert.ok(store.files["rankings/germany.json"]);
 });
 
+test("refuses to write a snapshot that fails validation", async () => {
+  const store = memoryStore();
+  await assert.rejects(
+    buildCountry(germany, {
+      store,
+      now,
+      candidateLimit: 10,
+      publicLimit: 10,
+      search: async () => [{ id: 1, login: "bad" }],
+      fetchUser: async () => ({ id: 1, login: "bad", name: null, avatarUrl: "not-https", location: null, years: [{ year: 2026, months: months(1) }] }),
+      log: () => {},
+    }),
+    /failed validation/,
+  );
+  assert.deepEqual(store.files, {});
+});
+
 test("reuses stored past years for known users", async () => {
   const previous: CountrySnapshot = {
     version: 1,

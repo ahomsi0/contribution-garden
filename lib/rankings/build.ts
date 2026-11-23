@@ -85,8 +85,12 @@ export async function buildCountry(country: CountryConfig, deps: BuildDeps): Pro
     generatedAt: deps.now.toISOString(),
     candidateCount: users.length,
   };
-  await deps.store.write(candidatesPath(country.slug), { ...base, users: ranked });
+  const candidateSnapshot: CountrySnapshot = { ...base, users: ranked };
   const snapshot: CountrySnapshot = { ...base, users: ranked.slice(0, deps.publicLimit) };
+  if (!isCountrySnapshot(candidateSnapshot) || !isCountrySnapshot(snapshot)) {
+    throw new Error(`${country.slug}: built snapshot failed validation`);
+  }
+  await deps.store.write(candidatesPath(country.slug), candidateSnapshot);
   await deps.store.write(publicPath(country.slug), snapshot);
   return snapshot;
 }

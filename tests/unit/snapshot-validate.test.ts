@@ -24,6 +24,12 @@ test("accepts a well-formed snapshot", () => {
   assert.equal(isCountrySnapshot(validSnapshot), true);
 });
 
+test("accepts backdated contribution years such as 1998", () => {
+  const snapshot = structuredClone(validSnapshot);
+  snapshot.users[0].years[0].year = 1998;
+  assert.equal(isCountrySnapshot(snapshot), true);
+});
+
 test("rejects wrong version, missing fields, and bad month arrays", () => {
   assert.equal(isCountrySnapshot({ ...validSnapshot, version: 2 }), false);
   assert.equal(isCountrySnapshot({ ...validSnapshot, country: undefined }), false);
@@ -58,7 +64,7 @@ const invalidCases: Array<[string, (s: CountrySnapshot) => void]> = [
   ["javascript avatarUrl", (s) => { s.users[0].avatarUrl = "javascript:alert(1)"; }],
   ["rank 0", (s) => { s.users[0].rank = 0; }],
   ["negative id", (s) => { s.users[0].id = -5; }],
-  ["year 1999", (s) => { s.users[0].years[0].year = 1999; }],
+  ["year 1969", (s) => { s.users[0].years[0].year = 1969; }],
   ["fractional year", (s) => { s.users[0].years[0].year = 2024.5; }],
   ["NaN month", (s) => { s.users[0].years[0].months[0] = NaN; }],
   ["Infinity month", (s) => { s.users[0].years[0].months[0] = Infinity; }],

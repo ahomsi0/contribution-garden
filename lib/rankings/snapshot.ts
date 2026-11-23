@@ -148,7 +148,7 @@ function isYearMonths(value: unknown): value is YearMonths {
     isRecord(value) &&
     typeof value.year === "number" &&
     Number.isInteger(value.year) &&
-    value.year >= 2008 &&
+    value.year >= 1970 &&
     value.year <= 2100 &&
     Array.isArray(value.months) &&
     value.months.length === 12 &&
