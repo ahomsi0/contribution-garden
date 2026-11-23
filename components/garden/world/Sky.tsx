@@ -22,8 +22,13 @@ export interface SkyAndLightsProps {
    * framed from further away is no hazier than one framed close up.
    */
   fogScale?: number;
-  /** Island radius; the sun's shadow camera is fitted to it. */
+  /** Island radius; the sun's shadow camera and the cloud sea fit it. */
   islandRadius?: number;
+  /**
+   * The default camera's azimuth (radians, atan2(z, x)). Clouds gather on
+   * the far side of the island from it, clear of the frame edges.
+   */
+  viewAzimuth?: number;
 }
 
 const DOME_RADIUS = 54;
@@ -40,8 +45,17 @@ const SHADOW_MARGIN = 2.5;
  * season changes current at a quarter of the cost.
  */
 const SHADOW_UPDATE_INTERVAL = 4;
-/** Dome height (−1..1) of the warm horizon band. */
-const HORIZON_HEIGHT = -0.2;
+/**
+ * Where each sky colour sits, as the elevation in degrees of the view ray
+ * from the camera: deep zenith, zenith, upper, lower, horizon glow, haze.
+ *
+ * The island floats high above a cloud sea and the default camera looks down
+ * at about 32°, so the frame spans roughly −11° (top) to −53° (bottom). The
+ * gradient is laid out across that band: blue overhead at the top of the
+ * frame, warming to the glow just above the clouds at the bottom. Orbiting
+ * lower brings more of the zenith into view, as a real sky would.
+ */
+const SKY_STOPS = [20, -8, -20, -31, -42, -60];
 
 const SUN_POSITIONS: Record<GardenTimeOfDay, VectorTuple> = {
   morning: [-9, 11, 10],
@@ -65,11 +79,6 @@ function mulberry32(seed: number) {
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-function smoothstep(edge0: number, edge1: number, value: number) {
-  const t = Math.min(1, Math.max(0, (value - edge0) / (edge1 - edge0)));
-  return t * t * (3 - 2 * t);
 }
 
 function fogRange(weather: GardenWeather, timeOfDay: GardenTimeOfDay) {
@@ -96,6 +105,7 @@ export function SkyAndLights({
   seed,
   fogScale = 1,
   islandRadius = 11.5,
+  viewAzimuth = Math.PI / 4,
 }: SkyAndLightsProps) {
   const fog = fogRange(weather, timeOfDay);
   const skyColor = useMemo(
@@ -123,13 +133,7 @@ export function SkyAndLights({
         attach="fog"
         args={[fogColor, fog.near * fogScale, fog.far * fogScale]}
       />
-      <SkyDome
-        fog={fogColor}
-        horizon={palette.horizon}
-        sky={skyColor}
-        timeOfDay={timeOfDay}
-        weather={weather}
-      />
+      <SkyDome palette={palette} timeOfDay={timeOfDay} weather={weather} />
       <hemisphereLight
         args={[palette.hemiSky, bounceColor, palette.hemiIntensity]}
       />
@@ -146,77 +150,100 @@ export function SkyAndLights({
         position={[-7, 8, 12]}
       />
       <SoftClouds
-        color={palette.cloud}
         count={tier.clouds}
+        islandRadius={islandRadius}
+        palette={palette}
         reducedMotion={reducedMotion}
         seed={seed + 3}
+        sun={SUN_POSITIONS[timeOfDay]}
         timeOfDay={timeOfDay}
+        viewAzimuth={viewAzimuth}
         weather={weather}
       />
     </>
   );
 }
 
+const SKY_VERTEX = /* glsl */ `
+varying vec3 vWorld;
+void main() {
+  vec4 world = modelMatrix * vec4(position, 1.0);
+  vWorld = world.xyz;
+  gl_Position = projectionMatrix * viewMatrix * world;
+}
+`;
+
+const SKY_FRAGMENT = /* glsl */ `
+uniform vec3 uColors[6];
+uniform float uStops[6];
+varying vec3 vWorld;
+
+float skyHash(vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main() {
+  vec3 direction = normalize(vWorld - cameraPosition);
+  float elevation = degrees(asin(clamp(direction.y, -1.0, 1.0)));
+  vec3 color = uColors[0];
+  for (int index = 1; index < 6; index++) {
+    float t = clamp(
+      (uStops[index - 1] - elevation) / (uStops[index - 1] - uStops[index]),
+      0.0,
+      1.0
+    );
+    color = mix(color, uColors[index], t * t * (3.0 - 2.0 * t));
+  }
+  // A little noise so the long, soft gradient doesn't band.
+  color += (skyHash(gl_FragCoord.xy) - 0.5) / 255.0;
+  gl_FragColor = vec4(color, 1.0);
+  #include <colorspace_fragment>
+}
+`;
+
+/**
+ * The sky: a gradient by view direction, so it reads the same from any orbit
+ * distance (vertex colours on the dome would warp with the camera's offset
+ * from its centre). Drawn first, with no depth, and never tone-mapped.
+ */
 function SkyDome({
-  fog,
-  horizon,
-  sky,
+  palette,
   timeOfDay,
   weather,
 }: {
-  fog: string;
-  horizon: string;
-  sky: string;
+  palette: WorldPalette;
   timeOfDay: GardenTimeOfDay;
   weather: GardenWeather;
 }) {
-  const geometry = useMemo(() => {
-    const sphere = new THREE.SphereGeometry(DOME_RADIUS, 48, 24);
-    const positions = sphere.getAttribute("position") as THREE.BufferAttribute;
-    const colors = new Float32Array(positions.count * 3);
-    const zenith = new THREE.Color(sky);
-    const warmHorizon = weatherTinted(horizon, weather, fog);
-    const below = new THREE.Color(fog);
-    // A slightly deeper zenith gives the gradient some depth without dulling it.
-    const deepZenith = zenith
-      .clone()
-      .multiplyScalar(timeOfDay === "night" ? 0.7 : 0.9);
-    const color = new THREE.Color();
-
-    for (let index = 0; index < positions.count; index += 1) {
-      const height = positions.getY(index) / DOME_RADIUS;
-      // The island floats high, so the warm horizon glow sits below eye
-      // level. That keeps sky colour in the top of the default orbit view,
-      // which looks down at the island, and haze toward the bottom.
-      if (height >= HORIZON_HEIGHT) {
-        color
-          .copy(warmHorizon)
-          .lerp(zenith, smoothstep(HORIZON_HEIGHT, 0.28, height))
-          .lerp(deepZenith, smoothstep(0.4, 1, height));
-      } else {
-        color
-          .copy(warmHorizon)
-          .lerp(below, smoothstep(HORIZON_HEIGHT, -0.7, height));
-      }
-      colors[index * 3] = color.r;
-      colors[index * 3 + 1] = color.g;
-      colors[index * 3 + 2] = color.b;
-    }
-
-    sphere.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    return sphere;
-  }, [fog, horizon, sky, timeOfDay, weather]);
+  const geometry = useMemo(() => new THREE.SphereGeometry(DOME_RADIUS, 32, 16), []);
+  const colors = useMemo(() => {
+    const tinted = (hex: string) => weatherTinted(hex, weather, palette.fog);
+    const zenith = tinted(palette.sky);
+    return [
+      zenith.clone().multiplyScalar(timeOfDay === "night" ? 0.7 : 0.88),
+      zenith,
+      tinted(palette.skyMid),
+      tinted(palette.skyLow),
+      tinted(palette.horizon),
+      tinted(palette.fog),
+    ];
+  }, [palette, timeOfDay, weather]);
   const material = useMemo(
     () =>
-      new THREE.MeshBasicMaterial({
+      new THREE.ShaderMaterial({
+        name: "sky",
+        vertexShader: SKY_VERTEX,
+        fragmentShader: SKY_FRAGMENT,
+        uniforms: {
+          uColors: { value: colors },
+          uStops: { value: SKY_STOPS },
+        },
         depthTest: false,
         depthWrite: false,
-        fog: false,
         side: THREE.BackSide,
         toneMapped: false,
-        vertexColors: true,
       }),
-    [],
+    [colors],
   );
 
   useEffect(() => () => geometry.dispose(), [geometry]);
@@ -313,25 +340,87 @@ interface CloudPuff {
   shade: number;
 }
 
+/** Cloud colours by time of day: sunlit top, sun-facing warmth, underside. */
+const CLOUD_LIGHT: Record<GardenTimeOfDay, { top: string; sun: string; under: string }> = {
+  morning: { top: "#fffaf4", sun: "#ffe2d2", under: "#dcd9ef" },
+  day: { top: "#ffffff", sun: "#fffbef", under: "#dbe6f2" },
+  sunset: { top: "#fff3e2", sun: "#ffd3a2", under: "#cfc2e4" },
+  night: { top: "#5c6888", sun: "#6c7a9c", under: "#2c3753" },
+};
+
+const CLOUD_VERTEX = /* glsl */ `
+varying vec3 vNormalWorld;
+varying vec3 vWorld;
+varying float vShade;
+void main() {
+  mat4 model = modelMatrix * instanceMatrix;
+  vec4 world = model * vec4(position, 1.0);
+  vWorld = world.xyz;
+  vNormalWorld = normalize(mat3(model) * normal);
+  #ifdef USE_INSTANCING_COLOR
+    vShade = instanceColor.r;
+  #else
+    vShade = 1.0;
+  #endif
+  gl_Position = projectionMatrix * viewMatrix * world;
+}
+`;
+
+const CLOUD_FRAGMENT = /* glsl */ `
+uniform vec3 uTop;
+uniform vec3 uSun;
+uniform vec3 uUnder;
+uniform vec3 uSunDirection;
+uniform float uOpacity;
+varying vec3 vNormalWorld;
+varying vec3 vWorld;
+varying float vShade;
+
+void main() {
+  vec3 normal = normalize(vNormalWorld);
+  vec3 toCamera = normalize(cameraPosition - vWorld);
+  // Bright tops, a soft lavender (or blue-grey) underside, warmth where the
+  // sun strikes.
+  float up = smoothstep(-0.95, 0.25, normal.y);
+  vec3 color = mix(uUnder, uTop, up);
+  float sunlit = max(dot(normal, uSunDirection), 0.0);
+  color = mix(color, uSun, sunlit * sunlit * 0.5);
+  color *= vShade;
+  // Fade toward the silhouette so every puff has a soft, feathered edge.
+  float facing = abs(dot(normal, toCamera));
+  float alpha = pow(smoothstep(0.0, 0.85, facing), 1.4) * uOpacity;
+  gl_FragColor = vec4(color, alpha);
+  #include <colorspace_fragment>
+}
+`;
+
 /**
- * Soft, lit clouds: each is a cluster of 4–6 spheres. Half form a cloud sea
- * below the island's rim; the rest float far out in the sky behind it. Both
- * bands sit outside every camera's line of sight to the island. All puffs
- * share one instanced draw call and drift together on a slow ring.
+ * Soft, bright clouds. Each is a bank of 6–8 overlapping puffs with feathered
+ * edges. Half form a cloud sea below and behind the island's rim, peeking out
+ * under it; the rest float high in the far sky behind it, above the default
+ * frame. Both stay on the far side of the island from the default camera so
+ * nothing sits as a blob at the frame edges. All puffs share one instanced
+ * draw and drift gently back and forth.
  */
 function SoftClouds({
-  color,
   count,
+  islandRadius,
+  palette,
   reducedMotion,
   seed,
+  sun,
   timeOfDay,
+  viewAzimuth,
   weather,
 }: {
-  color: string;
   count: number;
+  islandRadius: number;
+  palette: WorldPalette;
   reducedMotion: boolean;
   seed: number;
+  sun: VectorTuple;
   timeOfDay: GardenTimeOfDay;
+  viewAzimuth: number;
   weather: GardenWeather;
 }) {
   const group = useRef<THREE.Group>(null);
@@ -339,55 +428,77 @@ function SoftClouds({
   const puffs = useMemo(() => {
     const random = mulberry32(seed);
     const items: CloudPuff[] = [];
+    const back = viewAzimuth + Math.PI;
+    const far = Math.floor(count / 2);
+    const low = count - far;
     for (let cloud = 0; cloud < count; cloud += 1) {
-      const low = cloud % 2 === 0;
-      const angle = (cloud / Math.max(1, count)) * Math.PI * 2 + random() * 0.6;
-      const radius = low ? 16 + random() * 6 : 36 + random() * 6;
-      const height = low ? -7.5 + random() * 3 : 11 + random() * 5;
-      const size = low ? 1.7 + random() * 0.8 : 2.6 + random() * 1.4;
+      const isLow = cloud < low;
+      const slot = isLow ? cloud : cloud - low;
+      const slots = isLow ? low : far;
+      // Spread the banks across an arc behind the island.
+      const spread = isLow ? 1.5 : 1.3;
+      const along = slots <= 1 ? 0 : slot / (slots - 1) - 0.5;
+      const angle = back + along * spread + (random() - 0.5) * 0.25;
+      const radius = isLow
+        ? islandRadius + 4 + random() * 4
+        : 38 + random() * 6;
+      const height = isLow ? -8.5 + random() * 2.5 : 16 + random() * 5;
+      const size = isLow ? 2.4 + random() * 0.9 : 3.2 + random() * 1.4;
       const centerX = Math.cos(angle) * radius;
       const centerZ = Math.sin(angle) * radius;
       // Spread puffs along the ring's tangent so each cloud reads as a bank.
       const tangentX = -Math.sin(angle);
       const tangentZ = Math.cos(angle);
-      const puffCount = 4 + Math.floor(random() * 3);
+      // A bank of overlapping puffs, rounder and higher towards its crown,
+      // so it reads as one soft cumulus rather than a row of bubbles.
+      const puffCount = 6 + Math.floor(random() * 3);
       for (let puff = 0; puff < puffCount; puff += 1) {
-        const along = (puff / (puffCount - 1) - 0.5) * size * 2.6;
-        const crown = 1 - Math.abs(puff / (puffCount - 1) - 0.5) * 1.1;
-        const scale = size * (0.62 + crown * 0.42 + random() * 0.18);
+        const t = puff / (puffCount - 1) - 0.5;
+        const offset = t * size * 3 + (random() - 0.5) * size * 0.4;
+        const crown = 1 - Math.abs(t) * 1.4;
+        const scale = size * (0.45 + crown * 0.4 + random() * 0.18);
         items.push({
-          x: centerX + tangentX * along + (random() - 0.5) * size * 0.5,
-          y: height + crown * size * 0.32 + (random() - 0.5) * 0.3,
-          z: centerZ + tangentZ * along + (random() - 0.5) * size * 0.5,
-          sx: scale * (1.15 + random() * 0.3),
-          sy: scale * (0.58 + random() * 0.14),
-          sz: scale * (0.95 + random() * 0.25),
+          x: centerX + tangentX * offset + (random() - 0.5) * size * 0.7,
+          y: height + crown * size * 0.42 + (random() - 0.3) * size * 0.2,
+          z: centerZ + tangentZ * offset + (random() - 0.5) * size * 0.7,
+          sx: scale * (1.1 + random() * 0.3),
+          sy: scale * (0.55 + crown * 0.2 + random() * 0.1),
+          sz: scale * (1.0 + random() * 0.25),
           shade: crown,
         });
       }
     }
     return items;
-  }, [count, seed]);
-  const geometry = useMemo(() => new THREE.SphereGeometry(1, 18, 12), []);
-  const tint = useMemo(() => {
-    const base = weatherTinted(color, weather, color);
-    if (weather === "rain") base.lerp(new THREE.Color("#7d8b93"), 0.35);
-    if (timeOfDay === "night") base.multiplyScalar(0.45);
-    return base;
-  }, [color, timeOfDay, weather]);
+  }, [count, islandRadius, seed, viewAzimuth]);
+  const geometry = useMemo(() => new THREE.SphereGeometry(1, 20, 14), []);
+  const uniforms = useMemo(() => {
+    const light = CLOUD_LIGHT[timeOfDay];
+    const season = new THREE.Color(palette.cloud);
+    const tinted = (hex: string) => {
+      const color = weatherTinted(hex, weather, palette.fog);
+      if (weather === "rain") color.lerp(new THREE.Color("#7d8b93"), 0.35);
+      return color;
+    };
+    return {
+      uTop: { value: tinted(light.top).multiply(season) },
+      uSun: { value: tinted(light.sun).multiply(season) },
+      uUnder: { value: tinted(light.under) },
+      uSunDirection: { value: new THREE.Vector3(...sun).normalize() },
+      uOpacity: { value: timeOfDay === "night" ? 0.7 : 0.94 },
+    };
+  }, [palette.cloud, palette.fog, sun, timeOfDay, weather]);
   const material = useMemo(
     () =>
-      new THREE.MeshStandardMaterial({
+      new THREE.ShaderMaterial({
         name: "cloud",
-        roughness: 1,
-        metalness: 0,
-        fog: false,
-        // The undersides would otherwise pick up the hemisphere's earth
-        // tone; a little self-light keeps the clouds soft and bright.
-        emissive: tint,
-        emissiveIntensity: timeOfDay === "night" ? 0.15 : 0.5,
+        vertexShader: CLOUD_VERTEX,
+        fragmentShader: CLOUD_FRAGMENT,
+        uniforms,
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
       }),
-    [timeOfDay, tint],
+    [uniforms],
   );
 
   useEffect(() => () => geometry.dispose(), [geometry]);
@@ -397,32 +508,39 @@ function SoftClouds({
     const current = mesh.current;
     if (!current) return;
     const dummy = new THREE.Object3D();
-    const shaded = new THREE.Color();
-    const shadow = tint.clone().lerp(new THREE.Color("#c8d3de"), 0.3);
+    const shade = new THREE.Color();
     puffs.forEach((puff, index) => {
       dummy.position.set(puff.x, puff.y, puff.z);
       dummy.scale.set(puff.sx, puff.sy, puff.sz);
       dummy.updateMatrix();
       current.setMatrixAt(index, dummy.matrix);
-      current.setColorAt(index, shaded.copy(shadow).lerp(tint, 0.55 + puff.shade * 0.45));
+      // Crown puffs a touch brighter than the bank's flanks.
+      const value = 0.93 + puff.shade * 0.07;
+      current.setColorAt(index, shade.setRGB(value, value, value));
     });
     current.instanceMatrix.needsUpdate = true;
     if (current.instanceColor) current.instanceColor.needsUpdate = true;
     current.computeBoundingSphere();
-  }, [puffs, tint]);
+  }, [puffs]);
 
-  useFrame((_, delta) => {
+  useFrame((state) => {
     if (!group.current || reducedMotion) return;
-    group.current.rotation.y += Math.min(delta, 0.1) * (weather === "wind" ? 0.014 : 0.004);
+    // A slow sway rather than a full turn, so the banks stay behind the
+    // island instead of drifting round to the frame edges.
+    const speed = weather === "wind" ? 0.09 : 0.03;
+    group.current.rotation.y = Math.sin(state.clock.elapsedTime * speed) * 0.12;
   });
 
   return (
     <group ref={group} name="clouds">
       <instancedMesh
         ref={mesh}
+        // The material goes in as a prop, not an argument, so a new palette
+        // swaps it in place instead of rebuilding the mesh and its matrices.
         args={[geometry, undefined, puffs.length]}
         frustumCulled={false}
         material={material}
+        renderOrder={-50}
       />
     </group>
   );

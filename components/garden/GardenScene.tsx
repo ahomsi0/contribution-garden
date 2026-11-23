@@ -135,7 +135,8 @@ export function GardenScene({
   const health = clamp01(activity ?? deriveActivity(stats, days));
   const seed = hashString(`${username}:contribution-garden-layout`);
   const tier = TIER_SETTINGS[quality] ?? TIER_SETTINGS.high;
-  const skyColor = worldPalette(season, timeOfDay).sky;
+  // Shown until the canvas draws: the middle of the sky gradient.
+  const skyColor = worldPalette(season, timeOfDay).skyMid;
 
   return (
     <div
@@ -419,6 +420,7 @@ function GardenWorld({
         fogScale={clamp(framing.distance / REFERENCE_DISTANCE, 0.9, 2.2)}
         islandRadius={islandRadius}
         palette={world}
+        viewAzimuth={framing.azimuth}
         reducedMotion={reducedMotion}
         seed={seed}
         tier={tier}

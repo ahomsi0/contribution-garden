@@ -1,7 +1,10 @@
 import type { GardenSeason, GardenTimeOfDay } from "../types";
 
 export interface WorldPalette {
+  /** Sky gradient, top to bottom: zenith, upper, lower, horizon glow. */
   sky: string;
+  skyMid: string;
+  skyLow: string;
   horizon: string;
   fog: string;
   sun: string;
@@ -53,7 +56,8 @@ interface SeasonBase {
   bareDeciduous: boolean;
   cloud: string;
   sunDim: number;
-  daySky: string | null;
+  /** A paler daytime sky gradient for the season, or null for the default. */
+  daySky: { sky: string; skyMid: string; skyLow: string } | null;
 }
 
 const SEASONS: Record<GardenSeason, SeasonBase> = {
@@ -104,7 +108,8 @@ const SEASONS: Record<GardenSeason, SeasonBase> = {
     daySky: null,
   },
   autumn: {
-    grass: ["#8fae4f", "#b2c868"],
+    // Still a touch golden, but green enough to read as grass at sunset.
+    grass: ["#7fb444", "#a5cf5c"],
     grassDry: "#c4a84a",
     soil: "#6b4a32",
     earth: "#5a4330",
@@ -133,7 +138,9 @@ const SEASONS: Record<GardenSeason, SeasonBase> = {
     earth: "#5a4a40",
     cliff: "#7b7468",
     cliffLight: "#a9a39a",
-    foliage: ["#3a6f4a", "#4a8458", "#8fb09a", "#d6e4e4"],
+    // [2] colours the frosted twig tufts on bare trees; it stays a pale,
+    // cool sage so warm evening light can't turn it olive.
+    foliage: ["#3a6f4a", "#4a8458", "#b2c6c0", "#d6e4e4"],
     evergreen: ["#3a6f4a", "#2d5c3e"],
     trunk: "#5a4332",
     stone: "#c4c4bf",
@@ -147,12 +154,14 @@ const SEASONS: Record<GardenSeason, SeasonBase> = {
     bareDeciduous: true,
     cloud: "#f4f8fb",
     sunDim: 0.85,
-    daySky: "#c9dcea",
+    daySky: { sky: "#b4cfe8", skyMid: "#cadeee", skyLow: "#e0ebf2" },
   },
 };
 
 interface TimeBase {
   sky: string;
+  skyMid: string;
+  skyLow: string;
   horizon: string;
   fog: string;
   sun: string;
@@ -164,8 +173,11 @@ interface TimeBase {
 
 const TIMES: Record<GardenTimeOfDay, TimeBase> = {
   morning: {
-    sky: "#a9cfe8",
-    horizon: "#f6d6b8",
+    // Pale blue overhead, warming to a pink dawn glow.
+    sky: "#9cc4ea",
+    skyMid: "#cdd5ee",
+    skyLow: "#f3c6c6",
+    horizon: "#fbdcc8",
     fog: "#dfe8ec",
     sun: "#ffe0b8",
     sunIntensity: 2.3,
@@ -174,7 +186,9 @@ const TIMES: Record<GardenTimeOfDay, TimeBase> = {
     fillIntensity: 0.35,
   },
   day: {
-    sky: "#8fc8ec",
+    sky: "#86c2ec",
+    skyMid: "#a9d4f1",
+    skyLow: "#cfe7f2",
     horizon: "#f3e3b8",
     fog: "#d9ecf3",
     sun: "#fff1c9",
@@ -184,17 +198,24 @@ const TIMES: Record<GardenTimeOfDay, TimeBase> = {
     fillIntensity: 0.35,
   },
   sunset: {
-    sky: "#f0a872",
+    // Blue-violet overhead through mauve to a warm glow: golden hour on a
+    // green garden. The sky light stays cool so the grass keeps its green
+    // under the orange sun.
+    sky: "#6f86c9",
+    skyMid: "#c49ab8",
+    skyLow: "#f0a872",
     horizon: "#ffd59a",
     fog: "#f2c9a8",
-    sun: "#ffb46b",
+    sun: "#ffc58a",
     sunIntensity: 2.1,
-    hemiSky: "#ffd8b0",
+    hemiSky: "#9fb7e8",
     hemiIntensity: 0.8,
     fillIntensity: 0.35,
   },
   night: {
-    sky: "#16223a",
+    sky: "#121c33",
+    skyMid: "#1a2742",
+    skyLow: "#22324f",
     horizon: "#2b3d5c",
     fog: "#24324a",
     sun: "#b8c8ff",
@@ -211,11 +232,19 @@ export function worldPalette(season: GardenSeason, timeOfDay: GardenTimeOfDay): 
   const { sunDim, daySky, ...seasonColours } = s;
   return {
     ...seasonColours,
-    sky: season === "winter" && timeOfDay === "day" && daySky ? daySky : t.sky,
+    ...(season === "winter" && timeOfDay === "day" && daySky
+      ? daySky
+      : { sky: t.sky, skyMid: t.skyMid, skyLow: t.skyLow }),
     horizon: t.horizon,
     fog: t.fog,
     sun: t.sun,
-    sunIntensity: t.sunIntensity * (season === "winter" ? sunDim : 1),
+    // A low morning or evening sun already keeps snow from blowing out, so
+    // the winter dimming applies only to the high sun and the moon.
+    sunIntensity:
+      t.sunIntensity *
+      (season === "winter" && timeOfDay !== "morning" && timeOfDay !== "sunset"
+        ? sunDim
+        : 1),
     hemiSky: t.hemiSky,
     hemiGround: s.earth,
     hemiIntensity: t.hemiIntensity,
