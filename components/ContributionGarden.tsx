@@ -37,8 +37,11 @@ import {
   type Season,
   type TimeOfDay,
 } from "@/lib/garden-store";
-import { lifetimeContributions } from "@/lib/github-types";
-import type { ContributionDay, GitHubGardenData } from "@/lib/github-types";
+import {
+  lifetimeContributions,
+  type ContributionDay,
+  type GitHubGardenData,
+} from "@/lib/github-types";
 
 const GardenScene = dynamic(
   () =>
@@ -503,7 +506,7 @@ export default function ContributionGarden({
         key: "lifetime" as const,
         label: "Lifetime",
         value: lifetimeTotal,
-        detail: data?.source === "gitlab" ? "Past 12 months on GitLab" : "All public history",
+        detail: "All public history",
       },
       {
         key: "contributions" as const,
@@ -528,7 +531,6 @@ export default function ContributionGarden({
     ];
     if (data?.source === "gitlab") {
       return [
-        common[0],
         common[1],
         {
           key: "commits" as const,
