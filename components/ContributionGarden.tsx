@@ -836,7 +836,9 @@ export default function ContributionGarden({
 
   const handleShare = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("from");
+      await navigator.clipboard.writeText(url.toString());
       setToast({ message: "Shareable garden link copied", tone: "info" });
     } catch {
       setToast({ message: "Copy the URL from your browser to share", tone: "info" });
