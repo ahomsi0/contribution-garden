@@ -14,3 +14,15 @@ test("requests repository detail only for the two most recent years", () => {
 test("keeps the operation name the API tests match on", () => {
   assert.match(contributionHistoryQuery([2026], now), /query ContributionGardenHistory\(\$login: String!\)/);
 });
+
+test("only the 2026 and 2025 blocks include repository detail", () => {
+  const query = contributionHistoryQuery([2026, 2025, 2024, 2023], now);
+  const block = (year: number) =>
+    query.split(/(?=\by20\d\d: contributionsCollection)/).find((part) => part.trimStart().startsWith(`y${year}:`)) ?? "";
+  for (const year of [2026, 2025]) {
+    assert.match(block(year), /commitContributionsByRepository/, `y${year}`);
+  }
+  for (const year of [2024, 2023]) {
+    assert.doesNotMatch(block(year), /commitContributionsByRepository/, `y${year}`);
+  }
+});

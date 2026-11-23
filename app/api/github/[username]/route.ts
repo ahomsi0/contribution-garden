@@ -18,7 +18,7 @@ import { checkRateLimit, clientIpFromRequest } from "@/lib/rate-limit";
 
 const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 const REQUEST_TIMEOUT_MS = 15_000;
-// Each page is ~3.5 s because of per-repo languages; repos are sorted by stars, so the top 300 cover star and language totals for nearly everyone.
+// Each page is ~3.5 s because of per-repo languages; repos are sorted by stars, so the 300 most-starred cover star and language totals for nearly everyone.
 const MAX_REPOSITORY_PAGES = 3;
 const HISTORY_CHUNK_SIZE = 4;
 const HISTORY_CONCURRENCY = 3;
@@ -682,7 +682,7 @@ async function loadGitHubGarden(
     source: "github",
     fetchedAt: now.toISOString(),
     notice: repositoryResult.truncated
-      ? `Star and language totals cover the first ${MAX_REPOSITORY_PAGES * 100} public repositories.`
+      ? `Star and language totals cover the ${MAX_REPOSITORY_PAGES * 100} most-starred public repositories.`
       : undefined,
   };
 }

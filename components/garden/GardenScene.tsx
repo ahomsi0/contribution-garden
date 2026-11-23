@@ -2494,8 +2494,10 @@ function GrassMeadow({
     const day = item.dayIndex >= 0 ? days[item.dayIndex] : undefined;
     const contributionCount = day?.count ?? stats.commits;
     const title = day ? formatGardenDate(day.date) : "Commit meadow";
-    const repositoryText = day?.repositories?.length
-      ? day.repositories.join(", ")
+    const repositoryText = day
+      ? day.repositories?.length
+        ? day.repositories.join(", ")
+        : undefined
       : `${stats.repositories} repositories feed this habitat`;
     const groundY =
       (surfaceSampler(item.x, item.z) ?? 0) + ISLAND_SURFACE_OFFSET;
@@ -2519,7 +2521,7 @@ function GrassMeadow({
         ...(day ? [{ label: "Date", value: day.date }] : []),
         { label: day ? "Contributions" : "Commits", value: contributionCount },
         ...(day ? [{ label: "Intensity", value: `${clamp(day.level, 0, 4)}/4` }] : []),
-        { label: "Repositories", value: repositoryText },
+        ...(repositoryText ? [{ label: "Repositories", value: repositoryText }] : []),
       ],
     });
   };
