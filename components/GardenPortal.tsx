@@ -118,7 +118,7 @@ export default function GardenPortal() {
           <div className="garden-portal__image" aria-hidden="true">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/garden-hero-v4-voxel.webp"
+              src="/garden-hero-v5-lush.webp"
               alt=""
               width="1672"
               height="941"

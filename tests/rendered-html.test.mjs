@@ -80,7 +80,7 @@ test("server-renders the Contribution Garden shell", async () => {
   assert.match(html, /Contribution Garden/);
   assert.match(html, /A living GitHub and GitLab ecosystem/i);
   assert.match(html, /Enter the garden/i);
-  assert.match(html, /garden-hero-v4-voxel\.webp/);
+  assert.match(html, /garden-hero-v5-lush\.webp/);
   assert.match(html, /og-v2\.png/);
   assert.doesNotMatch(html, /data-contribution-garden/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
