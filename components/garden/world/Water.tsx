@@ -6,6 +6,7 @@ import * as THREE from "three";
 
 import {
   createPhotorealIslandEdge,
+  type PhotorealIslandEdge,
   type PhotorealIslandSurfaceSampler,
 } from "../photoreal-geometry";
 import type {
@@ -795,6 +796,43 @@ interface RibbonRow {
 }
 
 /**
+ * The heading of the rim point nearest the pond, snapped to a mesh segment so
+ * the cliff profile below it is made of the island mesh's own vertices. This
+ * is where the outflow channel leaves the pond and the waterfall pours over.
+ */
+function outflowRimAngle(edge: PhotorealIslandEdge, px: number, pz: number) {
+  let bestAngle = 0;
+  let bestDistance = Infinity;
+  for (let index = 0; index < 720; index += 1) {
+    const angle = (index / 720) * TAU;
+    const rim = edge.rimRadiusAt(angle);
+    const distance = Math.hypot(Math.cos(angle) * rim - px, Math.sin(angle) * rim - pz);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestAngle = angle;
+    }
+  }
+  const segmentAngle = TAU / edge.angularSegments;
+  return Math.round(bestAngle / segmentAngle) * segmentAngle;
+}
+
+/**
+ * Where the waterfall's outflow channel meets the island rim, for an island
+ * of this radius, mesh quality and seed (the same inputs the Island uses).
+ */
+export function outflowRimPoint(
+  islandRadius: number,
+  pond: { x: number; z: number },
+  quality: GardenQuality,
+  seed: number,
+): { x: number; z: number } {
+  const edge = createPhotorealIslandEdge({ radius: islandRadius, quality, seed });
+  const angle = outflowRimAngle(edge, pond.x, pond.z);
+  const rim = edge.rimRadiusAt(angle);
+  return { x: Math.cos(angle) * rim, z: Math.sin(angle) * rim };
+}
+
+/**
  * Builds the outflow channel and the falling stream as one ribbon: from inside
  * the pond to the nearest rim point, over the lip and down the cliff face,
  * just outside the island mesh's own cliff vertices.
@@ -810,22 +848,7 @@ function createFallShape(
 ): FallShape {
   const edge = createPhotorealIslandEdge({ radius: layout.islandRadius, quality, seed });
   const { x: px, z: pz } = layout.pond;
-
-  // The rim point nearest the pond, snapped to a mesh segment so the cliff
-  // profile below it is made of the mesh's own vertices.
-  let bestAngle = 0;
-  let bestDistance = Infinity;
-  for (let index = 0; index < 720; index += 1) {
-    const angle = (index / 720) * TAU;
-    const rim = edge.rimRadiusAt(angle);
-    const distance = Math.hypot(Math.cos(angle) * rim - px, Math.sin(angle) * rim - pz);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestAngle = angle;
-    }
-  }
-  const segmentAngle = TAU / edge.angularSegments;
-  const angle = Math.round(bestAngle / segmentAngle) * segmentAngle;
+  const angle = outflowRimAngle(edge, px, pz);
   const outX = Math.cos(angle);
   const outZ = Math.sin(angle);
   const profile = edge.edgeProfileAt(angle).map(

@@ -11,6 +11,11 @@ export interface MappingInput {
   seed: number;
   /** Tier density multiplier: low 0.5, medium 0.8, high 1. */
   density: number;
+  /**
+   * Circles year trees must keep clear of (for example the waterfall
+   * channel). A tree is nudged when it is within `radius + 0.6` of one.
+   */
+  obstacles?: ReadonlyArray<{ x: number; z: number; radius: number }>;
 }
 
 export interface YearTreeLayout {
@@ -86,8 +91,17 @@ export function distanceToPath(x: number, z: number): number {
   return Math.abs(PATH_SLOPE * x - z + PATH_INTERCEPT) / Math.hypot(PATH_SLOPE, 1);
 }
 
+/** Extra clearance between a year tree and an obstacle's radius. */
+export const OBSTACLE_CLEARANCE = 0.6;
+
 export function computeGardenLayout(input: MappingInput): GardenLayout {
   const { stats, activity, season, density } = input;
+  const obstacles = input.obstacles ?? [];
+  const blocked = (x: number, z: number) =>
+    distanceToPath(x, z) < 1.1 ||
+    obstacles.some(
+      (o) => Math.hypot(x - o.x, z - o.z) < o.radius + OBSTACLE_CLEARANCE,
+    );
   const rand = mulberry32(input.seed);
 
   const visible = input.days.filter(
@@ -124,7 +138,7 @@ export function computeGardenLayout(input: MappingInput): GardenLayout {
     const r = treeRingRadius + (rand() * 2 - 1) * 0.35;
     let x = r * Math.cos(theta);
     let z = r * Math.sin(theta);
-    for (let tries = 0; tries < 3 && distanceToPath(x, z) < 1.1; tries += 1) {
+    for (let tries = 0; tries < 3 && blocked(x, z); tries += 1) {
       theta += 0.3;
       x = r * Math.cos(theta);
       z = r * Math.sin(theta);

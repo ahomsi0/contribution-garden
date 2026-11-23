@@ -44,6 +44,12 @@ export interface LightweightNatureProps {
   surfaceOffset?: number;
   heroScale?: number;
   onHeroSelect?: () => void;
+  /**
+   * Draw the decorative trees and the hero tree. `world/Trees.tsx` now owns
+   * every tree, so the scene turns these off and keeps only shrubs and rocks
+   * until those are replaced too.
+   */
+  showTrees?: boolean;
 }
 
 const COUNTS: Record<
@@ -301,6 +307,7 @@ export function LightweightNature({
   surfaceOffset = -0.7,
   heroScale = 1.08,
   onHeroSelect,
+  showTrees = true,
 }: LightweightNatureProps) {
   const safeHealth = clamp01(health);
   const numericSeed = normalizeSeed(seed);
@@ -337,7 +344,7 @@ export function LightweightNature({
   const trees = useMemo(
     () =>
       createScatter({
-        count: counts.trees,
+        count: showTrees ? counts.trees : 0,
         seed: numericSeed + 101,
         innerRadius: 4,
         outerRadius: 9.55,
@@ -348,7 +355,7 @@ export function LightweightNature({
         minScale: 0.82,
         maxScale: 1.12,
       }),
-    [counts.trees, numericSeed],
+    [counts.trees, numericSeed, showTrees],
   );
   const shrubs = useMemo(
     () =>
@@ -522,30 +529,33 @@ export function LightweightNature({
 
   return (
     <group name="lightweight-nature">
-      <instancedMesh
-        ref={trunkRef}
-        args={[undefined, undefined, trees.length]}
-        castShadow={quality === "high"}
-        receiveShadow={quality === "high"}
-      >
-        <cylinderGeometry args={[0.38, 0.58, 2, 10, 1]} />
-        <meshBasicMaterial
-          toneMapped={false}
-        />
-      </instancedMesh>
+      {showTrees ? (
+        <>
+          <instancedMesh
+            ref={trunkRef}
+            args={[undefined, undefined, trees.length]}
+            castShadow={quality === "high"}
+            receiveShadow={quality === "high"}
+          >
+            <cylinderGeometry args={[0.38, 0.58, 2, 10, 1]} />
+            <meshBasicMaterial
+              toneMapped={false}
+            />
+          </instancedMesh>
 
-      <instancedMesh
-        ref={canopyRef}
-        args={[undefined, undefined, canopyCount]}
-        castShadow={quality === "high"}
-        receiveShadow={quality === "high"}
-      >
-        <icosahedronGeometry args={[1, 2]} />
-        <meshBasicMaterial
-          toneMapped={false}
-        />
-      </instancedMesh>
-
+          <instancedMesh
+            ref={canopyRef}
+            args={[undefined, undefined, canopyCount]}
+            castShadow={quality === "high"}
+            receiveShadow={quality === "high"}
+          >
+            <icosahedronGeometry args={[1, 2]} />
+            <meshBasicMaterial
+              toneMapped={false}
+            />
+          </instancedMesh>
+        </>
+      ) : null}
       <instancedMesh
         ref={shrubRef}
         args={[undefined, undefined, shrubs.length]}
@@ -569,41 +579,43 @@ export function LightweightNature({
         />
       </instancedMesh>
 
-      <group
-        name="streak-tree"
-        position={[HERO_X, heroGroundY, HERO_Z]}
-        rotation={[0, -0.24, 0]}
-        scale={heroScale}
-        onClick={(event) => {
-          event.stopPropagation();
-          onHeroSelect?.();
-        }}
-        onPointerOver={(event) => {
-          event.stopPropagation();
-          const target = event.nativeEvent.target;
-          if (target instanceof HTMLElement) target.style.cursor = "pointer";
-        }}
-        onPointerOut={(event) => {
-          event.stopPropagation();
-          const target = event.nativeEvent.target;
-          if (target instanceof HTMLElement) target.style.cursor = "grab";
-        }}
-      >
-        <mesh
-          geometry={heroTrunkGeometry}
-          castShadow={quality !== "low"}
-          receiveShadow
+      {showTrees ? (
+        <group
+          name="streak-tree"
+          position={[HERO_X, heroGroundY, HERO_Z]}
+          rotation={[0, -0.24, 0]}
+          scale={heroScale}
+          onClick={(event) => {
+            event.stopPropagation();
+            onHeroSelect?.();
+          }}
+          onPointerOver={(event) => {
+            event.stopPropagation();
+            const target = event.nativeEvent.target;
+            if (target instanceof HTMLElement) target.style.cursor = "pointer";
+          }}
+          onPointerOut={(event) => {
+            event.stopPropagation();
+            const target = event.nativeEvent.target;
+            if (target instanceof HTMLElement) target.style.cursor = "grab";
+          }}
         >
-          <meshBasicMaterial color="#57463a" toneMapped={false} />
-        </mesh>
-        <mesh
-          geometry={heroCanopyGeometry}
-          castShadow={quality !== "low"}
-          receiveShadow
-        >
-          <meshBasicMaterial toneMapped={false} vertexColors />
-        </mesh>
-      </group>
+          <mesh
+            geometry={heroTrunkGeometry}
+            castShadow={quality !== "low"}
+            receiveShadow
+          >
+            <meshBasicMaterial color="#57463a" toneMapped={false} />
+          </mesh>
+          <mesh
+            geometry={heroCanopyGeometry}
+            castShadow={quality !== "low"}
+            receiveShadow
+          >
+            <meshBasicMaterial toneMapped={false} vertexColors />
+          </mesh>
+        </group>
+      ) : null}
     </group>
   );
 }

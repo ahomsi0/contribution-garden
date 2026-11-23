@@ -8,10 +8,7 @@ import {
   useRef,
 } from "react";
 import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
-import {
-  OrbitControls,
-  useTexture,
-} from "@react-three/drei";
+import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 
 import type {
@@ -31,12 +28,17 @@ import {
   type PhotorealIslandSurfaceSampler,
 } from "./photoreal-geometry";
 import { Island, ISLAND_SURFACE_OFFSET } from "./world/Island";
-import { computeGardenLayout } from "./world/mapping";
+import {
+  computeGardenLayout,
+  type GardenLayout,
+  type MappingInput,
+} from "./world/mapping";
 import { Meadow } from "./world/Meadow";
 import { worldPalette } from "./world/palette";
 import { SkyAndLights } from "./world/Sky";
 import { TIER_SETTINGS } from "./world/tiers";
-import { Water } from "./world/Water";
+import { Trees } from "./world/Trees";
+import { outflowRimPoint, Water } from "./world/Water";
 
 type VectorTuple = [number, number, number];
 
@@ -68,10 +70,6 @@ interface ScatterItem {
   rotation: number;
   scale: number;
   variant: number;
-}
-
-interface TreeItem extends ScatterItem {
-  age: number;
 }
 
 interface EdgeScatterItem extends ScatterItem {
@@ -319,42 +317,6 @@ function createFlowerClusters(count: number, seed: number): ScatterItem[] {
   return items;
 }
 
-function createTrees(count: number, seed: number): TreeItem[] {
-  const random = seededRandom(seed);
-  const items: TreeItem[] = [];
-  const groveArcs = [
-    { start: Math.PI * 0.62, length: Math.PI * 0.48 },
-    { start: Math.PI * 1.05, length: Math.PI * 0.34 },
-    { start: -Math.PI * 0.08, length: Math.PI * 0.3 },
-  ];
-  let attempts = 0;
-
-  while (items.length < count && attempts < count * 30) {
-    attempts += 1;
-    const arc = groveArcs[Math.floor(random() * groveArcs.length)];
-    const angle = arc.start + random() * arc.length;
-    const distance = 4.05 + random() * 2.85;
-    const x = Math.cos(angle) * distance;
-    const z = Math.sin(angle) * distance;
-
-    if (!isOutsidePond(x, z, 1.7)) continue;
-    if (x > 0.7 && x < 4.2 && z > -1.6 && z < 2.2) continue;
-    if (Math.abs(z + x * 0.24 + 2.3) < 0.72) continue;
-    if (items.some((item) => Math.hypot(item.x - x, item.z - z) < 1.28)) continue;
-
-    items.push({
-      x,
-      z,
-      rotation: random() * Math.PI * 2,
-      scale: 0.68 + random() * 0.43,
-      age: random(),
-      variant: Math.floor(random() * 4),
-    });
-  }
-
-  return items;
-}
-
 function createEdgeScatter(
   count: number,
   seed: number,
@@ -386,6 +348,10 @@ function createEdgeScatter(
   }
 
   return items;
+}
+
+function tupleFromVector(vector: THREE.Vector3): VectorTuple {
+  return [vector.x, vector.y, vector.z];
 }
 
 function createFlowerHeadGeometry() {
@@ -443,52 +409,6 @@ function deriveActivity(stats: GardenStats, days: GardenDay[]) {
 
 function mergeClassNames(...values: Array<string | undefined>) {
   return values.filter(Boolean).join(" ");
-}
-
-function useSurfaceTextureSet(
-  surface: "forest-floor" | "bark",
-  repeatX: number,
-  repeatY: number,
-) {
-  const texturePath = (channel: "color" | "normal" | "roughness") =>
-    surface === "forest-floor"
-      ? `/textures/${surface}-${channel}-512.webp`
-      : `/textures/${surface}-${channel}.jpg`;
-  const [colorSource, normalSource, roughnessSource] = useTexture([
-    texturePath("color"),
-    texturePath("normal"),
-    texturePath("roughness"),
-  ]);
-  const textures = useMemo(() => {
-    const clones = [
-      colorSource.clone(),
-      normalSource.clone(),
-      roughnessSource.clone(),
-    ] as [THREE.Texture, THREE.Texture, THREE.Texture];
-
-    clones.forEach((texture, index) => {
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.wrapT = THREE.RepeatWrapping;
-      texture.repeat.set(repeatX, repeatY);
-      texture.anisotropy = 4;
-      texture.colorSpace =
-        index === 0 ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-      texture.needsUpdate = true;
-    });
-    return clones;
-  }, [
-    colorSource,
-    normalSource,
-    repeatX,
-    repeatY,
-    roughnessSource,
-  ]);
-
-  useEffect(
-    () => () => textures.forEach((texture) => texture.dispose()),
-    [textures],
-  );
-  return textures;
 }
 
 export function GardenScene({
@@ -650,6 +570,32 @@ interface GardenWorldProps {
   onWalkthroughExit?: () => void;
 }
 
+/**
+ * Circles along the waterfall's outflow channel, from the pond's edge to the
+ * rim point the channel pours over, so year trees keep off the water.
+ */
+function waterfallChannelObstacles(
+  layout: GardenLayout,
+  quality: GardenQuality,
+  seed: number,
+) {
+  const pond = layout.pond;
+  const rim = outflowRimPoint(layout.islandRadius, pond, quality, seed);
+  const dx = rim.x - pond.x;
+  const dz = rim.z - pond.z;
+  const length = Math.hypot(dx, dz);
+  const start = Math.min(length, 1.2 * pond.scale);
+  const count = Math.max(2, Math.ceil((length - start) / 1.1) + 1);
+  return Array.from({ length: count }, (_, index) => {
+    const distance = start + ((length - start) * index) / (count - 1);
+    return {
+      x: pond.x + (dx / length) * distance,
+      z: pond.z + (dz / length) * distance,
+      radius: 0.8,
+    };
+  });
+}
+
 function GardenWorld({
   stats,
   days,
@@ -675,35 +621,41 @@ function GardenWorld({
     () => worldPalette(season, timeOfDay),
     [season, timeOfDay],
   );
-  const layout = useMemo(
-    () =>
-      computeGardenLayout({
-        days,
-        visibleThrough,
-        stats: {
-          pullRequests: stats.pullRequests,
-          issues: stats.issues,
-          repositories: stats.repositories,
-          streak: stats.streak,
-        },
-        activity: health,
-        season,
-        seed,
-        density,
-      }),
-    [
+  const layout = useMemo(() => {
+    const input: MappingInput = {
       days,
-      density,
-      health,
+      visibleThrough,
+      stats: {
+        pullRequests: stats.pullRequests,
+        issues: stats.issues,
+        repositories: stats.repositories,
+        streak: stats.streak,
+      },
+      activity: health,
       season,
       seed,
-      stats.issues,
-      stats.pullRequests,
-      stats.repositories,
-      stats.streak,
-      visibleThrough,
-    ],
-  );
+      density,
+    };
+    // The island radius and pond don't depend on obstacles, so a first pass
+    // tells us where the waterfall channel runs; year trees then keep off it.
+    const draft = computeGardenLayout(input);
+    return computeGardenLayout({
+      ...input,
+      obstacles: waterfallChannelObstacles(draft, quality, seed),
+    });
+  }, [
+    days,
+    density,
+    health,
+    quality,
+    season,
+    seed,
+    stats.issues,
+    stats.pullRequests,
+    stats.repositories,
+    stats.streak,
+    visibleThrough,
+  ]);
   const islandRadius = layout.islandRadius;
   // Same radius and seed as the Island mesh, so everything placed with it
   // stays grounded as the island grows with the years of history.
@@ -716,39 +668,6 @@ function GardenWorld({
       }),
     [islandRadius, quality, seed],
   );
-  const heroRootY =
-    (surfaceSampler(2.62, 0.48) ?? 0) + ISLAND_SURFACE_OFFSET;
-  const selectPhotorealHeroTree = () => {
-    const legendary = stats.streak >= 365;
-    const ancient = stats.streak >= 1000;
-    onSelect?.({
-      kind: legendary ? "achievement" : "tree",
-      id: "streak-tree",
-      title: ancient
-        ? "Ancient Spirit Tree"
-        : legendary
-          ? "Legendary streak tree"
-          : "Streak tree",
-      subtitle: "Streak landmark",
-      description: legendary
-        ? "Extraordinary consistency made this the oldest landmark in the garden."
-        : "Each uninterrupted contribution day strengthens the oldest tree.",
-      accent: legendary ? palette.waterGlow : palette.foliage[2],
-      worldPosition: [2.62, heroRootY + 3.4, 0.48],
-      details: [
-        { label: "Longest streak", value: `${stats.streak} days` },
-        {
-          label: "State",
-          value: ancient ? "Ancient" : legendary ? "Legendary" : "Growing",
-        },
-        {
-          label: "Total contributions",
-          value: stats.totalContributions.toLocaleString(),
-        },
-      ],
-      count: stats.streak,
-    });
-  };
 
   return (
     <>
@@ -813,13 +732,22 @@ function GardenWorld({
           seed={seed + 53}
           surfaceOffset={ISLAND_SURFACE_OFFSET}
           surfaceSampler={surfaceSampler}
-          heroScale={
-            1.04 + health * 0.05 + Math.min(0.14, stats.streak / 5000)
-          }
-          onHeroSelect={selectPhotorealHeroTree}
+          showTrees={false}
         />
       )}
-
+      <Trees
+        layout={layout}
+        palette={world}
+        quality={quality}
+        reducedMotion={reducedMotion}
+        season={season}
+        seed={seed + 401}
+        stats={stats}
+        surfaceSampler={surfaceSampler}
+        tier={tier}
+        weather={weather}
+        onSelect={onSelect}
+      />
       <Meadow
         days={days}
         layout={layout}
@@ -846,19 +774,6 @@ function GardenWorld({
             seed={seed + 233}
             stats={stats}
             surfaceSampler={surfaceSampler}
-            weather={weather}
-            onSelect={onSelect}
-          />
-          <TreeGrove
-            density={density}
-            health={health}
-            palette={palette}
-            quality={quality}
-            reducedMotion={reducedMotion}
-            season={season}
-            seed={seed + 401}
-            stats={stats}
-            timeOfDay={timeOfDay}
             weather={weather}
             onSelect={onSelect}
           />
@@ -1327,1200 +1242,6 @@ function FlowerField({
         <sphereGeometry args={[1, 6, 4]} />
         <meshStandardMaterial color="#f6cb62" emissive="#7b4c16" emissiveIntensity={0.05} />
       </instancedMesh>
-    </group>
-  );
-}
-
-type TreeSpecies = "oak" | "pine" | "birch" | "maple";
-
-interface TreeBranch {
-  start: VectorTuple;
-  end: VectorTuple;
-  radius: number;
-  shade: number;
-}
-
-interface TreeFoliageTip {
-  position: VectorTuple;
-  rotation: VectorTuple;
-  scale: VectorTuple;
-  colorIndex: number;
-  keep: number;
-  snow: number;
-  blossom: number;
-  shade: number;
-}
-
-interface TreeStructure {
-  species: TreeSpecies;
-  branches: TreeBranch[];
-  foliage: TreeFoliageTip[];
-  crownPivot: VectorTuple;
-  height: number;
-}
-
-interface TreeBatchItem {
-  structure: TreeStructure;
-  position: VectorTuple;
-  rotation: number;
-  scale: number;
-  owner: number;
-}
-
-interface TreeRenderInstance {
-  matrix: THREE.Matrix4;
-  color: THREE.Color;
-  owner: number;
-  treeSlot: number;
-}
-
-interface TreeFoliageInstance extends TreeRenderInstance {
-  localMatrix: THREE.Matrix4;
-}
-
-interface TreeAnimation {
-  rootMatrix: THREE.Matrix4;
-  pivotMatrix: THREE.Matrix4;
-  inversePivotMatrix: THREE.Matrix4;
-  phase: number;
-}
-
-const TREE_SPECIES: TreeSpecies[] = ["oak", "pine", "birch", "maple"];
-const TREE_SPECIES_LABEL: Record<TreeSpecies, string> = {
-  oak: "Oak",
-  pine: "Pine",
-  birch: "Birch",
-  maple: "Maple",
-};
-const TREE_UP = new THREE.Vector3(0, 1, 0);
-
-function tupleFromVector(vector: THREE.Vector3): VectorTuple {
-  return [vector.x, vector.y, vector.z];
-}
-
-function treeScaleFor(item: TreeItem) {
-  return item.scale * (0.86 + item.age * 0.2);
-}
-
-function addTreeBranch(
-  branches: TreeBranch[],
-  start: THREE.Vector3,
-  end: THREE.Vector3,
-  radius: number,
-  shade: number,
-) {
-  branches.push({
-    start: tupleFromVector(start),
-    end: tupleFromVector(end),
-    radius,
-    shade,
-  });
-}
-
-function addFoliageTip(
-  foliage: TreeFoliageTip[],
-  position: THREE.Vector3,
-  scale: VectorTuple,
-  angle: number,
-  random: () => number,
-) {
-  foliage.push({
-    position: tupleFromVector(position),
-    rotation: [
-      (random() - 0.5) * 0.55,
-      angle + (random() - 0.5) * 0.7,
-      (random() - 0.5) * 0.48,
-    ],
-    scale,
-    colorIndex: Math.floor(random() * 4),
-    keep: random(),
-    snow: random(),
-    blossom: random(),
-    shade: random() - 0.5,
-  });
-}
-
-function buildPineStructure(
-  item: TreeItem,
-  random: () => number,
-  quality: GardenQuality,
-): TreeStructure {
-  const branches: TreeBranch[] = [];
-  const foliage: TreeFoliageTip[] = [];
-  const trunkSegments = quality === "high" ? 5 : quality === "medium" ? 4 : 3;
-  const whorls = quality === "high" ? 5 : quality === "medium" ? 4 : 3;
-  const branchesPerWhorl = quality === "high" ? 6 : quality === "medium" ? 5 : 4;
-  const trunkTop = 2.72 + item.age * 0.18;
-  const leanAngle = random() * Math.PI * 2;
-  const leanAmount = 0.08 + random() * 0.08;
-  const centerAt = (height: number) => {
-    const progress = height / trunkTop;
-    return new THREE.Vector3(
-      Math.cos(leanAngle) * leanAmount * progress * progress,
-      height,
-      Math.sin(leanAngle) * leanAmount * progress * progress,
-    );
-  };
-
-  let previous = centerAt(0);
-  for (let index = 1; index <= trunkSegments; index += 1) {
-    const progress = index / trunkSegments;
-    const next = centerAt(trunkTop * progress);
-    addTreeBranch(
-      branches,
-      previous,
-      next,
-      0.205 * (1 - progress * 0.62) + 0.028,
-      random() - 0.5,
-    );
-    previous = next;
-  }
-
-  const rootCount = quality === "high" ? 5 : quality === "medium" ? 4 : 3;
-  for (let index = 0; index < rootCount; index += 1) {
-    const angle = (index / rootCount) * Math.PI * 2 + random() * 0.42;
-    const length = 0.42 + random() * 0.22;
-    addTreeBranch(
-      branches,
-      new THREE.Vector3(Math.cos(angle) * 0.04, 0.075, Math.sin(angle) * 0.04),
-      new THREE.Vector3(Math.cos(angle) * length, 0.025, Math.sin(angle) * length),
-      0.075 + random() * 0.025,
-      random() - 0.5,
-    );
-  }
-
-  for (let level = 0; level < whorls; level += 1) {
-    const progress = level / Math.max(1, whorls - 1);
-    const height = 0.72 + progress * (trunkTop - 1.08);
-    const center = centerAt(height);
-    const spread = 1.06 - progress * 0.55;
-
-    for (let branchIndex = 0; branchIndex < branchesPerWhorl; branchIndex += 1) {
-      const angle =
-        (branchIndex / branchesPerWhorl) * Math.PI * 2 +
-        level * 0.62 +
-        (random() - 0.5) * 0.24;
-      const direction = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
-      const joint = center
-        .clone()
-        .addScaledVector(direction, spread * 0.52)
-        .add(new THREE.Vector3(0, 0.015 - progress * 0.055, 0));
-      const tip = center
-        .clone()
-        .addScaledVector(direction, spread * (0.9 + random() * 0.16))
-        .add(new THREE.Vector3(0, -0.04 - progress * 0.06, 0));
-
-      addTreeBranch(
-        branches,
-        center,
-        joint,
-        0.07 * (1 - progress * 0.42) + 0.022,
-        random() - 0.5,
-      );
-      addTreeBranch(
-        branches,
-        joint,
-        tip,
-        0.045 * (1 - progress * 0.36) + 0.014,
-        random() - 0.5,
-      );
-
-      const clusterScale: VectorTuple = [
-        0.34 + random() * 0.1,
-        0.17 + random() * 0.06,
-        0.5 + random() * 0.12,
-      ];
-      addFoliageTip(foliage, tip, clusterScale, angle, random);
-
-      if (quality !== "low" && (branchIndex + level) % 2 === 0) {
-        const middleTip = joint.clone().lerp(tip, 0.56);
-        addFoliageTip(
-          foliage,
-          middleTip,
-          [clusterScale[0] * 0.86, clusterScale[1] * 0.86, clusterScale[2] * 0.82],
-          angle,
-          random,
-        );
-      }
-    }
-  }
-
-  const top = centerAt(trunkTop);
-  addFoliageTip(foliage, top.clone().add(new THREE.Vector3(0, 0.08, 0)), [0.3, 0.52, 0.3], 0, random);
-
-  return {
-    species: "pine",
-    branches,
-    foliage,
-    crownPivot: tupleFromVector(centerAt(trunkTop * 0.5)),
-    height: trunkTop + 0.4,
-  };
-}
-
-function buildBroadleafStructure(
-  item: TreeItem,
-  random: () => number,
-  quality: GardenQuality,
-  species: Exclude<TreeSpecies, "pine">,
-  hero: boolean,
-): TreeStructure {
-  const branches: TreeBranch[] = [];
-  const foliage: TreeFoliageTip[] = [];
-  const trunkSegments = hero
-    ? quality === "high"
-      ? 5
-      : 4
-    : quality === "high"
-      ? 4
-      : 3;
-  const trunkTop = hero
-    ? 2.82
-    : species === "birch"
-      ? 2.46
-      : species === "maple"
-        ? 2.08
-        : 1.92;
-  const baseRadius = hero ? 0.42 : species === "birch" ? 0.17 : species === "maple" ? 0.245 : 0.27;
-  const leanAngle = random() * Math.PI * 2;
-  const leanAmount = hero ? 0.2 : species === "birch" ? 0.16 : 0.12 + random() * 0.12;
-  const curvePhase = random() * Math.PI * 2;
-  const centerAt = (height: number) => {
-    const progress = height / trunkTop;
-    const curve = Math.sin(progress * Math.PI + curvePhase) * leanAmount * 0.22;
-    return new THREE.Vector3(
-      Math.cos(leanAngle) * leanAmount * progress * progress +
-        Math.cos(leanAngle + Math.PI / 2) * curve,
-      height,
-      Math.sin(leanAngle) * leanAmount * progress * progress +
-        Math.sin(leanAngle + Math.PI / 2) * curve,
-    );
-  };
-
-  let previous = centerAt(0);
-  for (let index = 1; index <= trunkSegments; index += 1) {
-    const progress = index / trunkSegments;
-    const next = centerAt(trunkTop * progress);
-    addTreeBranch(
-      branches,
-      previous,
-      next,
-      baseRadius * (1 - progress * 0.68) + (hero ? 0.055 : 0.034),
-      random() - 0.5,
-    );
-    previous = next;
-  }
-
-  const rootCount = hero ? 7 : quality === "high" ? 5 : quality === "medium" ? 4 : 3;
-  for (let index = 0; index < rootCount; index += 1) {
-    const angle = (index / rootCount) * Math.PI * 2 + random() * 0.5;
-    const length = (hero ? 0.78 : 0.5) * (0.78 + random() * 0.42);
-    addTreeBranch(
-      branches,
-      new THREE.Vector3(Math.cos(angle) * 0.05, 0.08, Math.sin(angle) * 0.05),
-      new THREE.Vector3(Math.cos(angle) * length, 0.025, Math.sin(angle) * length),
-      (hero ? 0.125 : 0.085) * (0.82 + random() * 0.28),
-      random() - 0.5,
-    );
-  }
-
-  const branchCount = hero
-    ? quality === "high"
-      ? 12
-      : quality === "medium"
-        ? 9
-        : 7
-    : quality === "high"
-      ? species === "birch"
-        ? 8
-        : 9
-      : quality === "medium"
-        ? 6
-        : 4;
-  const spread = hero ? 1.48 : species === "oak" ? 1.08 : species === "maple" ? 0.95 : 0.72;
-  const rise = hero ? 0.64 : species === "birch" ? 0.72 : species === "maple" ? 0.66 : 0.5;
-  const twigCount = quality === "high" || hero ? 2 : 1;
-  const baseCluster: VectorTuple =
-    species === "birch"
-      ? [0.29, 0.45, 0.27]
-      : species === "maple"
-        ? [0.43, 0.52, 0.39]
-        : hero
-          ? [0.5, 0.46, 0.46]
-          : [0.47, 0.4, 0.44];
-
-  for (let index = 0; index < branchCount; index += 1) {
-    const angle =
-      (index / branchCount) * Math.PI * 2 +
-      (random() - 0.5) * (hero ? 0.35 : 0.5);
-    const tier = index % (hero ? 4 : 3);
-    const anchorHeight =
-      trunkTop * (hero ? 0.34 + tier * 0.105 : 0.42 + tier * 0.12) +
-      (random() - 0.5) * 0.09;
-    const anchor = centerAt(anchorHeight);
-    const length = spread * (0.76 + random() * 0.34) * (1 - tier * 0.055);
-    const direction = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
-    const joint = anchor
-      .clone()
-      .addScaledVector(direction, length * 0.5)
-      .add(new THREE.Vector3(0, rise * 0.36, 0));
-    const end = anchor
-      .clone()
-      .addScaledVector(direction, length)
-      .add(new THREE.Vector3(0, rise * (0.72 + random() * 0.3), 0));
-
-    addTreeBranch(
-      branches,
-      anchor,
-      joint,
-      baseRadius * (hero ? 0.46 : 0.4) * (0.9 + random() * 0.18),
-      random() - 0.5,
-    );
-    addTreeBranch(
-      branches,
-      joint,
-      end,
-      baseRadius * (hero ? 0.28 : 0.25) * (0.86 + random() * 0.18),
-      random() - 0.5,
-    );
-
-    for (let twigIndex = 0; twigIndex < twigCount; twigIndex += 1) {
-      const forkDirection =
-        angle +
-        (twigIndex === 0 ? -1 : 1) * (0.24 + random() * 0.25) +
-        (random() - 0.5) * 0.16;
-      const twigLength = (hero ? 0.62 : 0.42) * (0.78 + random() * 0.38);
-      const droop = species === "birch" && twigIndex % 2 === 1 ? -0.06 : 0.16 + random() * 0.18;
-      const tip = end.clone().add(
-        new THREE.Vector3(
-          Math.cos(forkDirection) * twigLength,
-          droop,
-          Math.sin(forkDirection) * twigLength,
-        ),
-      );
-      addTreeBranch(
-        branches,
-        end,
-        tip,
-        baseRadius * (hero ? 0.15 : 0.13) * (0.82 + random() * 0.24),
-        random() - 0.5,
-      );
-      addFoliageTip(
-        foliage,
-        tip,
-        [
-          baseCluster[0] * (0.82 + random() * 0.34),
-          baseCluster[1] * (0.8 + random() * 0.38),
-          baseCluster[2] * (0.82 + random() * 0.34),
-        ],
-        forkDirection,
-        random,
-      );
-    }
-
-    if (quality === "high" && index % 2 === 0) {
-      addFoliageTip(
-        foliage,
-        end,
-        [baseCluster[0] * 0.78, baseCluster[1] * 0.7, baseCluster[2] * 0.78],
-        angle,
-        random,
-      );
-    }
-  }
-
-  const top = centerAt(trunkTop);
-  const leaderCount = hero ? 5 : quality === "low" ? 2 : 3;
-  for (let index = 0; index < leaderCount; index += 1) {
-    const angle = (index / leaderCount) * Math.PI * 2 + random() * 0.6;
-    const leaderTip = top.clone().add(
-      new THREE.Vector3(
-        Math.cos(angle) * (hero ? 0.48 : 0.3),
-        (hero ? 0.68 : 0.48) + random() * 0.2,
-        Math.sin(angle) * (hero ? 0.48 : 0.3),
-      ),
-    );
-    addTreeBranch(
-      branches,
-      top,
-      leaderTip,
-      baseRadius * (hero ? 0.18 : 0.15),
-      random() - 0.5,
-    );
-    addFoliageTip(
-      foliage,
-      leaderTip,
-      [
-        baseCluster[0] * (0.8 + random() * 0.2),
-        baseCluster[1] * (0.88 + random() * 0.25),
-        baseCluster[2] * (0.8 + random() * 0.2),
-      ],
-      angle,
-      random,
-    );
-  }
-
-  const height = foliage.reduce(
-    (maximum, tip) => Math.max(maximum, tip.position[1] + tip.scale[1] * 0.8),
-    trunkTop,
-  );
-
-  return {
-    species,
-    branches,
-    foliage,
-    crownPivot: tupleFromVector(centerAt(trunkTop * (hero ? 0.4 : 0.48))),
-    height,
-  };
-}
-
-function buildTreeStructure(
-  item: TreeItem,
-  index: number,
-  quality: GardenQuality,
-  hero = false,
-): TreeStructure {
-  const species = hero ? "oak" : TREE_SPECIES[item.variant % TREE_SPECIES.length];
-  const random = seededRandom(
-    hashString(
-      `${hero ? "spirit" : "grove"}:${index}:${item.x.toFixed(3)}:${item.z.toFixed(3)}:${item.age.toFixed(3)}`,
-    ),
-  );
-
-  if (species === "pine") {
-    return buildPineStructure(item, random, quality);
-  }
-  return buildBroadleafStructure(item, random, quality, species, hero);
-}
-
-function createBranchMatrix(branch: TreeBranch) {
-  const start = new THREE.Vector3(...branch.start);
-  const end = new THREE.Vector3(...branch.end);
-  const direction = end.clone().sub(start);
-  const length = Math.max(0.001, direction.length());
-  const midpoint = start.clone().add(end).multiplyScalar(0.5);
-  const quaternion = new THREE.Quaternion().setFromUnitVectors(
-    TREE_UP,
-    direction.normalize(),
-  );
-  return new THREE.Matrix4().compose(
-    midpoint,
-    quaternion,
-    new THREE.Vector3(branch.radius, length, branch.radius),
-  );
-}
-
-function createFoliageMatrix(tip: TreeFoliageTip) {
-  return new THREE.Matrix4().compose(
-    new THREE.Vector3(...tip.position),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(...tip.rotation)),
-    new THREE.Vector3(...tip.scale),
-  );
-}
-
-function createLeafSprayGeometry(quality: GardenQuality) {
-  const leafCount = quality === "high" ? 14 : quality === "medium" ? 9 : 6;
-  const positions: number[] = [];
-
-  const pushTriangle = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
-    positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
-  };
-
-  for (let index = 0; index < leafCount; index += 1) {
-    const angle = index * 2.399963229728653;
-    const verticalBand = ((index * 3) % leafCount) / Math.max(1, leafCount - 1);
-    const radius = 0.1 + (index % 3) * 0.055;
-    const center = new THREE.Vector3(
-      Math.cos(angle) * radius,
-      (verticalBand - 0.5) * 0.62,
-      Math.sin(angle) * radius,
-    );
-    const direction = new THREE.Vector3(
-      Math.cos(angle) * (0.5 + (index % 2) * 0.12),
-      0.66 + ((index + 1) % 3) * 0.09,
-      Math.sin(angle) * (0.5 + (index % 2) * 0.12),
-    ).normalize();
-    const side = new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle)).normalize();
-    const fold = side.clone().cross(direction).normalize();
-    const length = 0.55 + (index % 4) * 0.055;
-    const width = 0.19 + ((index + 2) % 3) * 0.035;
-    const base = center.clone().addScaledVector(direction, -length * 0.48);
-    const tip = center.clone().addScaledVector(direction, length * 0.52);
-    const left = center.clone().addScaledVector(side, width);
-    const right = center.clone().addScaledVector(side, -width);
-    const ridge = center.clone().addScaledVector(fold, 0.045 + (index % 2) * 0.018);
-
-    pushTriangle(base, left, ridge);
-    pushTriangle(base, ridge, right);
-    pushTriangle(left, tip, ridge);
-    pushTriangle(ridge, tip, right);
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(positions, 3),
-  );
-  geometry.computeVertexNormals();
-  geometry.computeBoundingSphere();
-  return geometry;
-}
-
-function treeRootMatrix(tree: TreeBatchItem) {
-  return new THREE.Matrix4().compose(
-    new THREE.Vector3(...tree.position),
-    new THREE.Quaternion().setFromAxisAngle(TREE_UP, tree.rotation),
-    new THREE.Vector3(tree.scale, tree.scale, tree.scale),
-  );
-}
-
-function foliageFactor(
-  species: TreeSpecies,
-  season: GardenSeason,
-  health: number,
-  winterFoliage: number,
-) {
-  const seasonal =
-    species === "pine"
-      ? season === "winter"
-        ? 0.84
-        : season === "spring"
-          ? 0.9
-          : 1
-      : season === "winter"
-        ? winterFoliage
-        : season === "spring"
-          ? 0.76
-          : season === "autumn"
-            ? 0.72
-            : 1;
-  const vitality = health < 0.14 ? 0.16 : 0.54 + health * 0.46;
-  return clamp01(seasonal * vitality);
-}
-
-function treeTrunkColor(
-  palette: GardenPalette,
-  species: TreeSpecies,
-  shade: number,
-) {
-  const color = new THREE.Color("#d4bea9");
-  if (species === "birch") color.set("#f1eee4");
-  if (species === "pine") color.set("#a98f7b");
-  if (species === "maple") color.set("#c9a28a");
-  color.lerp(new THREE.Color(palette.trunk), 0.08);
-  color.offsetHSL(0, 0, shade * 0.065);
-  return color;
-}
-
-function treeLeafColor(
-  palette: GardenPalette,
-  species: TreeSpecies,
-  season: GardenSeason,
-  health: number,
-  tip: TreeFoliageTip,
-) {
-  const paletteIndex =
-    species === "pine"
-      ? tip.colorIndex % 2
-      : (tip.colorIndex + (species === "maple" ? 1 : 0)) % palette.foliage.length;
-  const color = new THREE.Color(palette.foliage[paletteIndex]);
-
-  if (season === "spring" && species !== "pine") {
-    color.lerp(new THREE.Color("#a9d979"), 0.16);
-  }
-  if (species === "pine") {
-    color.lerp(new THREE.Color("#214b3b"), 0.16);
-  }
-  color.lerp(new THREE.Color(palette.groundDry), (1 - health) * 0.28);
-  color.offsetHSL(0, 0, tip.shade * 0.11);
-  return color;
-}
-
-function ProceduralTreeBatch({
-  trees,
-  health,
-  palette,
-  quality,
-  reducedMotion,
-  season,
-  weather,
-  emissive = "#000000",
-  emissiveIntensity = 0,
-  winterFoliage = 0,
-  onSelectOwner,
-}: {
-  trees: TreeBatchItem[];
-  health: number;
-  palette: GardenPalette;
-  quality: GardenQuality;
-  reducedMotion: boolean;
-  season: GardenSeason;
-  weather: GardenWeather;
-  emissive?: string;
-  emissiveIntensity?: number;
-  winterFoliage?: number;
-  onSelectOwner: (owner: number) => void;
-}) {
-  const branches = useRef<THREE.InstancedMesh>(null);
-  const leaves = useRef<THREE.InstancedMesh>(null);
-  const snow = useRef<THREE.InstancedMesh>(null);
-  const blossoms = useRef<THREE.InstancedMesh>(null);
-  const cursorHandlers = useCursorHandlers();
-  const [barkColorMap, barkNormalMap, barkRoughnessMap] =
-    useSurfaceTextureSet("bark", 1.4, 3.8);
-  const leafGeometry = useMemo(() => createLeafSprayGeometry(quality), [quality]);
-
-  useEffect(() => () => leafGeometry.dispose(), [leafGeometry]);
-
-  const renderData = useMemo(() => {
-    const branchInstances: TreeRenderInstance[] = [];
-    const leafInstances: TreeFoliageInstance[] = [];
-    const snowInstances: TreeRenderInstance[] = [];
-    const blossomInstances: TreeRenderInstance[] = [];
-    const animations: TreeAnimation[] = [];
-
-    trees.forEach((tree, treeSlot) => {
-      const rootMatrix = treeRootMatrix(tree);
-      const pivot = new THREE.Vector3(...tree.structure.crownPivot);
-      const pivotMatrix = new THREE.Matrix4().makeTranslation(
-        pivot.x,
-        pivot.y,
-        pivot.z,
-      );
-      const inversePivotMatrix = new THREE.Matrix4().makeTranslation(
-        -pivot.x,
-        -pivot.y,
-        -pivot.z,
-      );
-      animations.push({
-        rootMatrix,
-        pivotMatrix,
-        inversePivotMatrix,
-        phase: tree.rotation * 0.7 + tree.owner * 0.83 + treeSlot * 0.41,
-      });
-
-      tree.structure.branches.forEach((branch) => {
-        branchInstances.push({
-          matrix: rootMatrix.clone().multiply(createBranchMatrix(branch)),
-          color: treeTrunkColor(
-            palette,
-            tree.structure.species,
-            branch.shade,
-          ),
-          owner: tree.owner,
-          treeSlot,
-        });
-      });
-
-      const factor = foliageFactor(
-        tree.structure.species,
-        season,
-        health,
-        winterFoliage,
-      );
-      const minimumLeaves =
-        factor <= 0 ? 0 : tree.structure.species === "pine" ? 3 : 2;
-
-      tree.structure.foliage.forEach((tip, tipIndex) => {
-        const isVisible = tipIndex < minimumLeaves || tip.keep <= factor;
-        const localMatrix = createFoliageMatrix(tip);
-
-        if (isVisible) {
-          leafInstances.push({
-            matrix: rootMatrix.clone().multiply(localMatrix),
-            localMatrix,
-            color: treeLeafColor(
-              palette,
-              tree.structure.species,
-              season,
-              health,
-              tip,
-            ),
-            owner: tree.owner,
-            treeSlot,
-          });
-        }
-
-        if (
-          season === "winter" &&
-          tip.snow <
-            (tree.structure.species === "pine"
-              ? quality === "low"
-                ? 0.28
-                : 0.5
-              : quality === "high"
-                ? 0.28
-                : 0.18)
-        ) {
-          const snowPosition = new THREE.Vector3(...tip.position);
-          snowPosition.y += tip.scale[1] * 0.35;
-          const snowMatrix = new THREE.Matrix4().compose(
-            snowPosition,
-            new THREE.Quaternion().setFromEuler(
-              new THREE.Euler(0, tip.rotation[1], tip.rotation[2] * 0.2),
-            ),
-            new THREE.Vector3(
-              tip.scale[0] * 0.72,
-              0.045 + tip.scale[1] * 0.08,
-              tip.scale[2] * 0.68,
-            ),
-          );
-          snowInstances.push({
-            matrix: rootMatrix.clone().multiply(snowMatrix),
-            color: new THREE.Color("#eef6f3"),
-            owner: tree.owner,
-            treeSlot,
-          });
-        }
-
-        if (
-          season === "spring" &&
-          quality !== "low" &&
-          tree.structure.species !== "pine" &&
-          health > 0.34 &&
-          isVisible &&
-          tip.blossom < 0.2
-        ) {
-          const blossomPosition = new THREE.Vector3(...tip.position).add(
-            new THREE.Vector3(
-              Math.cos(tip.rotation[1]) * tip.scale[0] * 0.38,
-              tip.scale[1] * 0.32,
-              Math.sin(tip.rotation[1]) * tip.scale[2] * 0.38,
-            ),
-          );
-          const size = 0.075 + tip.blossom * 0.12;
-          const blossomMatrix = new THREE.Matrix4().compose(
-            blossomPosition,
-            new THREE.Quaternion().setFromEuler(
-              new THREE.Euler(tip.rotation[0], tip.rotation[1], tip.rotation[2]),
-            ),
-            new THREE.Vector3(size, size * 0.72, size),
-          );
-          blossomInstances.push({
-            matrix: rootMatrix.clone().multiply(blossomMatrix),
-            color: new THREE.Color(
-              palette.flowers[(tip.colorIndex + tree.owner) % palette.flowers.length],
-            ),
-            owner: tree.owner,
-            treeSlot,
-          });
-        }
-      });
-    });
-
-    return {
-      animations,
-      branches: branchInstances,
-      leaves: leafInstances,
-      snow: snowInstances,
-      blossoms: blossomInstances,
-    };
-  }, [
-    health,
-    palette,
-    quality,
-    season,
-    trees,
-    winterFoliage,
-  ]);
-
-  useLayoutEffect(() => {
-    const syncInstances = (
-      mesh: THREE.InstancedMesh | null,
-      instances: TreeRenderInstance[],
-      dynamic = false,
-    ) => {
-      if (!mesh) return;
-      if (dynamic) mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      instances.forEach((instance, index) => {
-        mesh.setMatrixAt(index, instance.matrix);
-        mesh.setColorAt(index, instance.color);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    };
-
-    syncInstances(branches.current, renderData.branches);
-    syncInstances(leaves.current, renderData.leaves, true);
-    syncInstances(snow.current, renderData.snow);
-    syncInstances(blossoms.current, renderData.blossoms);
-  }, [renderData]);
-
-  const windScratch = useMemo(
-    () => ({
-      rotation: new THREE.Matrix4(),
-      rotationX: new THREE.Matrix4(),
-      result: new THREE.Matrix4(),
-    }),
-    [],
-  );
-
-  useFrame((state) => {
-    if (!leaves.current || reducedMotion || renderData.leaves.length === 0) return;
-    const force =
-      weather === "wind"
-        ? 1
-        : weather === "rain"
-          ? 0.58
-          : weather === "snow"
-            ? 0.3
-            : 0.2;
-    const elapsed = state.clock.elapsedTime;
-
-    renderData.leaves.forEach((leaf, index) => {
-      const animation = renderData.animations[leaf.treeSlot];
-      const sway =
-        Math.sin(elapsed * 0.78 + animation.phase) *
-        0.018 *
-        force;
-      windScratch.rotation.makeRotationZ(sway);
-      windScratch.rotationX.makeRotationX(
-        Math.cos(elapsed * 0.62 + animation.phase * 1.3) * sway * 0.46,
-      );
-      windScratch.rotation.multiply(windScratch.rotationX);
-      windScratch.result
-        .copy(animation.rootMatrix)
-        .multiply(animation.pivotMatrix)
-        .multiply(windScratch.rotation)
-        .multiply(animation.inversePivotMatrix)
-        .multiply(leaf.localMatrix);
-      leaves.current?.setMatrixAt(index, windScratch.result);
-    });
-    leaves.current.instanceMatrix.needsUpdate = true;
-  });
-
-  const selectInstance = (
-    event: ThreeEvent<MouseEvent>,
-    instances: TreeRenderInstance[],
-  ) => {
-    event.stopPropagation();
-    const instance = instances[event.instanceId ?? 0] ?? instances[0];
-    if (instance) onSelectOwner(instance.owner);
-  };
-
-  const radialSegments =
-    quality === "high" ? 10 : quality === "medium" ? 8 : 6;
-
-  return (
-    <group>
-      {renderData.branches.length > 0 ? (
-        <instancedMesh
-          ref={branches}
-          args={[undefined, undefined, renderData.branches.length]}
-          castShadow={quality !== "low"}
-          receiveShadow
-          frustumCulled={false}
-          onClick={(event) => selectInstance(event, renderData.branches)}
-          {...cursorHandlers}
-        >
-          <cylinderGeometry args={[0.58, 1, 1, radialSegments, 1, false]} />
-          <meshStandardMaterial
-            map={barkColorMap}
-            normalMap={barkNormalMap}
-            normalScale={new THREE.Vector2(0.38, 0.38)}
-            roughness={0.9}
-            roughnessMap={barkRoughnessMap}
-          />
-        </instancedMesh>
-      ) : null}
-      {renderData.leaves.length > 0 ? (
-        <instancedMesh
-          ref={leaves}
-          args={[leafGeometry, undefined, renderData.leaves.length]}
-          castShadow={quality === "high"}
-          frustumCulled={false}
-          onClick={(event) => selectInstance(event, renderData.leaves)}
-          {...cursorHandlers}
-        >
-          <meshStandardMaterial
-            emissive={emissive}
-            emissiveIntensity={emissiveIntensity}
-            roughness={0.78}
-            side={THREE.DoubleSide}
-          />
-        </instancedMesh>
-      ) : null}
-      {renderData.snow.length > 0 ? (
-        <instancedMesh
-          ref={snow}
-          args={[undefined, undefined, renderData.snow.length]}
-          castShadow={quality === "high"}
-          frustumCulled={false}
-          onClick={(event) => selectInstance(event, renderData.snow)}
-          {...cursorHandlers}
-        >
-          <dodecahedronGeometry args={[1, 0]} />
-          <meshStandardMaterial
-            flatShading
-            roughness={0.8}
-          />
-        </instancedMesh>
-      ) : null}
-      {renderData.blossoms.length > 0 ? (
-        <instancedMesh
-          ref={blossoms}
-          args={[undefined, undefined, renderData.blossoms.length]}
-          frustumCulled={false}
-          onClick={(event) => selectInstance(event, renderData.blossoms)}
-          {...cursorHandlers}
-        >
-          <tetrahedronGeometry args={[1, 0]} />
-          <meshStandardMaterial
-            emissive="#4b2a28"
-            emissiveIntensity={0.08}
-            flatShading
-            roughness={0.76}
-          />
-        </instancedMesh>
-      ) : null}
-    </group>
-  );
-}
-
-function TreeGrove({
-  density,
-  health,
-  palette,
-  quality,
-  reducedMotion,
-  season,
-  seed,
-  stats,
-  timeOfDay,
-  weather,
-  onSelect,
-}: {
-  density: number;
-  health: number;
-  palette: GardenPalette;
-  quality: GardenQuality;
-  reducedMotion: boolean;
-  season: GardenSeason;
-  seed: number;
-  stats: GardenStats;
-  timeOfDay: GardenTimeOfDay;
-  weather: GardenWeather;
-  onSelect?: (selection: GardenSelection | null) => void;
-}) {
-  const count = Math.round(
-    clamp(1 + Math.sqrt(Math.max(0, stats.pullRequests)) * 0.78, 1, 14) *
-      density,
-  );
-  const trees = useMemo(() => createTrees(count, seed), [count, seed]);
-  const structures = useMemo(
-    () => trees.map((tree, index) => buildTreeStructure(tree, index, quality)),
-    [quality, trees],
-  );
-  const batchTrees = useMemo<TreeBatchItem[]>(
-    () =>
-      trees.map((tree, index) => ({
-        structure: structures[index],
-        position: [tree.x, 0.05, tree.z],
-        rotation: tree.rotation,
-        scale: treeScaleFor(tree),
-        owner: index,
-      })),
-    [structures, trees],
-  );
-
-  const selectTree = (index: number) => {
-    const item = trees[index];
-    const structure = structures[index];
-    if (!item || !structure) return;
-    const growthStage =
-      item.age > 0.72 ? "Mature" : item.age > 0.36 ? "Growing" : "Young";
-    const treeScale = treeScaleFor(item);
-    onSelect?.({
-      kind: "tree",
-      id: `pull-request-tree-${index}`,
-      title: `${growthStage} ${TREE_SPECIES_LABEL[structure.species].toLowerCase()}`,
-      subtitle: "Pull request grove",
-      description:
-        "The current pull request total sustains this collaborative perimeter grove.",
-      accent: palette.foliage[item.variant % palette.foliage.length],
-      worldPosition: [
-        item.x,
-        0.05 + structure.height * treeScale * 0.62,
-        item.z,
-      ],
-      details: [
-        { label: "Pull requests", value: stats.pullRequests },
-        { label: "Species", value: TREE_SPECIES_LABEL[structure.species] },
-        { label: "Growth stage", value: growthStage },
-        { label: "Canopy health", value: `${Math.round(health * 100)}%` },
-      ],
-      count: stats.pullRequests,
-    });
-  };
-
-  return (
-    <group>
-      <ProceduralTreeBatch
-        trees={batchTrees}
-        health={health}
-        palette={palette}
-        quality={quality}
-        reducedMotion={reducedMotion}
-        season={season}
-        weather={weather}
-        onSelectOwner={selectTree}
-      />
-      <SpiritTree
-        health={health}
-        palette={palette}
-        quality={quality}
-        reducedMotion={reducedMotion}
-        season={season}
-        stats={stats}
-        timeOfDay={timeOfDay}
-        weather={weather}
-        onSelect={onSelect}
-      />
-    </group>
-  );
-}
-
-function SpiritTree({
-  health,
-  palette,
-  quality,
-  reducedMotion,
-  season,
-  stats,
-  surfaceSampler,
-  timeOfDay,
-  weather,
-  onSelect,
-}: {
-  health: number;
-  palette: GardenPalette;
-  quality: GardenQuality;
-  reducedMotion: boolean;
-  season: GardenSeason;
-  stats: GardenStats;
-  surfaceSampler?: PhotorealIslandSurfaceSampler;
-  timeOfDay: GardenTimeOfDay;
-  weather: GardenWeather;
-  onSelect?: (selection: GardenSelection | null) => void;
-}) {
-  const legendary = stats.streak >= 365;
-  const ancient = stats.streak >= 1000;
-  const glow = legendary ? (timeOfDay === "night" ? 0.65 : 0.28) : 0.04;
-  const heroScale = 1 + health * 0.04 + Math.min(0.28, stats.streak / 3200);
-  const rootY = surfaceSampler
-    ? (surfaceSampler(2.62, 0.48) ?? 0) + ISLAND_SURFACE_OFFSET
-    : 0.15;
-  const heroItem = useMemo<TreeItem>(
-    () => ({
-      x: 0,
-      z: 0,
-      rotation: -0.24,
-      scale: 1,
-      variant: 0,
-      age: 1,
-    }),
-    [],
-  );
-  const structure = useMemo(
-    () => buildTreeStructure(heroItem, 1977, quality, true),
-    [heroItem, quality],
-  );
-  const batchTrees = useMemo<TreeBatchItem[]>(
-    () => [
-      {
-        structure,
-        position: [2.62, rootY, 0.48],
-        rotation: heroItem.rotation,
-        scale: heroScale,
-        owner: 0,
-      },
-    ],
-    [heroItem.rotation, heroScale, rootY, structure],
-  );
-
-  const selectSpiritTree = () => {
-    const title = ancient
-      ? "Ancient Spirit Tree"
-      : legendary
-        ? "Legendary streak tree"
-        : "Streak tree";
-    onSelect?.({
-      kind: legendary ? "achievement" : "tree",
-      id: "streak-tree",
-      title,
-      subtitle: "Streak landmark",
-      description: legendary
-        ? "Extraordinary consistency awakened a permanent light in the garden."
-        : "Each uninterrupted contribution day strengthens the oldest tree.",
-      accent: legendary ? palette.waterGlow : palette.foliage[2],
-      worldPosition: [2.62, rootY + structure.height * heroScale * 0.58, 0.48],
-      details: [
-        { label: "Longest streak", value: `${stats.streak} days` },
-        {
-          label: "State",
-          value: ancient ? "Ancient" : legendary ? "Legendary" : "Growing",
-        },
-        {
-          label: "Total contributions",
-          value: stats.totalContributions.toLocaleString(),
-        },
-      ],
-      count: stats.streak,
-    });
-  };
-
-  return (
-    <group>
-      <ProceduralTreeBatch
-        trees={batchTrees}
-        health={health}
-        palette={palette}
-        quality={quality}
-        reducedMotion={reducedMotion}
-        season={season}
-        weather={weather}
-        emissive={legendary ? palette.waterGlow : "#000000"}
-        emissiveIntensity={glow}
-        winterFoliage={legendary ? 0.22 : 0}
-        onSelectOwner={selectSpiritTree}
-      />
-      {legendary ? (
-        <group position={[2.62, rootY, 0.48]} scale={heroScale}>
-          <pointLight
-            color={palette.waterGlow}
-            distance={6.5}
-            intensity={timeOfDay === "night" ? 13 : 5}
-            position={[0, 2.6, 0]}
-          />
-          <SpiritLights color={palette.waterGlow} reducedMotion={reducedMotion} />
-        </group>
-      ) : null}
-    </group>
-  );
-}
-
-function SpiritLights({ color, reducedMotion }: { color: string; reducedMotion: boolean }) {
-  const group = useRef<THREE.Group>(null);
-  useFrame((state) => {
-    if (!group.current || reducedMotion) return;
-    group.current.rotation.y = state.clock.elapsedTime * 0.25;
-    group.current.position.y = Math.sin(state.clock.elapsedTime * 0.8) * 0.08;
-  });
-
-  return (
-    <group ref={group} position={[0, 2.6, 0]}>
-      {Array.from({ length: 7 }, (_, index) => {
-        const angle = (index / 7) * Math.PI * 2;
-        const radius = 1.1 + (index % 2) * 0.45;
-        return (
-          <mesh
-            key={index}
-            position={[Math.cos(angle) * radius, (index % 3) * 0.34 - 0.2, Math.sin(angle) * radius]}
-          >
-            <sphereGeometry args={[0.045 + (index % 2) * 0.018, 6, 6]} />
-            <meshBasicMaterial color={color} toneMapped={false} />
-          </mesh>
-        );
-      })}
     </group>
   );
 }

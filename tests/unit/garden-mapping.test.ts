@@ -123,3 +123,21 @@ test("empty days give the minimal garden", () => {
   assert.equal(e.greatTree.scale, 0.9);
   assert.equal(e.lifetime, 0);
 });
+
+test("an obstacle on the ring keeps every year tree clear of it", () => {
+  for (const days of [lightDays(), heavyDays()]) {
+    const ring = computeGardenLayout(input(days, 3)).treeRingRadius;
+    for (let k = 0; k < 24; k += 1) {
+      const angle = (k / 24) * Math.PI * 2;
+      const obstacle = { x: Math.cos(angle) * ring, z: Math.sin(angle) * ring, radius: 0.8 };
+      const layout = computeGardenLayout(input(days, 3, { obstacles: [obstacle] }));
+      for (const tree of layout.yearTrees) {
+        const gap = Math.hypot(tree.x - obstacle.x, tree.z - obstacle.z);
+        assert.ok(
+          gap >= obstacle.radius + 0.6,
+          `tree ${tree.year} is ${gap.toFixed(2)} from an obstacle at ${angle.toFixed(2)} rad`,
+        );
+      }
+    }
+  }
+});
