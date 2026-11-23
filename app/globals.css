@@ -406,3 +406,8 @@ a:focus-visible {
     left: 14px;
   }
 }
+
+/* The mobile garden menu opens over the top-left corner; hide the back link while it's open. */
+.garden-app:has(.cg-mobile-menu-trigger[aria-expanded="true"]) + .garden-back-link {
+  display: none;
+}
