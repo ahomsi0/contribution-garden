@@ -1,3 +1,7 @@
+import { GitHubRequestError, chunk, fetchGraphQL, type GitHubAuthorization } from "@/lib/github/graphql";
+import { yearRange } from "@/lib/github/history-query";
+import { rollUpMonths, type DailyCount, type YearMonths } from "./snapshot";
+
 export interface SearchUser {
   id: number;
   login: string;
@@ -87,4 +91,142 @@ export async function searchCandidates(
     }
   }
   return merged;
+}
+
+
+export interface FetchedUser {
+  id: number;
+  login: string;
+  name: string | null;
+  avatarUrl: string;
+  /** Free-text profile location, or null. */
+  location: string | null;
+  /** Only the years that were fetched, oldest first. */
+  years: YearMonths[];
+}
+
+export interface HistoryDeps {
+  token: string;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => Date;
+}
+
+const HISTORY_CHUNK = 8;
+const RATE_LIMIT_FLOOR = 200;
+const RESET_MARGIN_MS = 5_000;
+
+interface RawHistory {
+  rateLimit: { remaining: number; resetAt: string };
+  user:
+    | ({
+        databaseId: number;
+        login: string;
+        name: string | null;
+        avatarUrl: string;
+        location: string | null;
+        contributionsCollection: { contributionYears: number[] };
+      } & Record<string, unknown>)
+    | null;
+}
+
+interface RawYear {
+  contributionCalendar: {
+    weeks: Array<{ contributionDays: Array<{ date: string; contributionCount: number }> }>;
+  };
+}
+
+function historyQuery(years: readonly number[], now: Date): string {
+  const selections = years
+    .map((year) => {
+      const { from, to } = yearRange(year, now);
+      return `y${year}: contributionsCollection(from: "${from}", to: "${to}") {
+        contributionCalendar { weeks { contributionDays { date contributionCount } } }
+      }`;
+    })
+    .join("\n");
+  return `query RankingHistory($login: String!) {
+    rateLimit { remaining resetAt }
+    user(login: $login) {
+      databaseId login name avatarUrl location
+      contributionsCollection { contributionYears }
+      ${selections}
+    }
+  }`;
+}
+
+function yearsBetween(from: number, to: number): number[] {
+  const years: number[] = [];
+  for (let year = from; year <= to; year += 1) years.push(year);
+  return years;
+}
+
+export async function fetchUserHistory(
+  login: string,
+  fromYear: number | null,
+  now: Date,
+  deps: HistoryDeps,
+): Promise<FetchedUser | null> {
+  const sleep = deps.sleep ?? defaultSleep;
+  const clock = deps.now ?? (() => new Date());
+  const authorization: GitHubAuthorization = {
+    header: `Bearer ${deps.token}`,
+    kind: "rankings",
+    cacheScope: "rankings",
+  };
+  const currentYear = now.getUTCFullYear();
+
+  const run = async (years: number[]): Promise<RawHistory> => {
+    const data = await fetchGraphQL<RawHistory>(authorization, historyQuery(years, now), { login });
+    if (data.rateLimit.remaining < RATE_LIMIT_FLOOR) {
+      const wait = Date.parse(data.rateLimit.resetAt) - clock().getTime() + RESET_MARGIN_MS;
+      if (wait > 0) await sleep(wait);
+    }
+    return data;
+  };
+
+  const days: DailyCount[] = [];
+  const collect = (data: RawHistory, years: number[]) => {
+    for (const year of years) {
+      const raw = data.user?.[`y${year}`] as RawYear | undefined;
+      for (const week of raw?.contributionCalendar.weeks ?? []) {
+        for (const day of week.contributionDays) {
+          days.push({ date: day.date, count: day.contributionCount });
+        }
+      }
+    }
+  };
+
+  const firstYears = yearsBetween(fromYear ?? currentYear - 1, currentYear);
+  let first: RawHistory;
+  try {
+    first = await run(firstYears);
+  } catch (error) {
+    if (error instanceof GitHubRequestError && error.status === 404) return null;
+    throw error;
+  }
+  if (!first.user) return null;
+  collect(first, firstYears);
+
+  if (fromYear === null) {
+    const earliest = Math.min(currentYear, ...first.user.contributionsCollection.contributionYears);
+    const remaining = yearsBetween(earliest, firstYears[0] - 1);
+    for (const years of chunk(remaining, HISTORY_CHUNK)) {
+      collect(await run(years), years);
+    }
+  }
+
+  const unique = new Map(days.map((day) => [day.date, day]));
+  const fetchedFrom = fromYear ?? Math.min(currentYear, ...first.user.contributionsCollection.contributionYears);
+  const rolled = rollUpMonths([...unique.values()]);
+  const byYear = new Map(rolled.map((year) => [year.year, year]));
+  return {
+    id: first.user.databaseId,
+    login: first.user.login,
+    name: first.user.name,
+    avatarUrl: first.user.avatarUrl,
+    location: first.user.location ?? null,
+    years: yearsBetween(fetchedFrom, currentYear).map(
+      (year) => byYear.get(year) ?? { year, months: Array.from({ length: 12 }, () => 0) },
+    ),
+  };
 }
