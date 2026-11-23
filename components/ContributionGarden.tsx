@@ -37,6 +37,7 @@ import {
   type Season,
   type TimeOfDay,
 } from "@/lib/garden-store";
+import { lifetimeContributions } from "@/lib/github-types";
 import type { ContributionDay, GitHubGardenData } from "@/lib/github-types";
 
 const GardenScene = dynamic(
@@ -491,8 +492,19 @@ export default function ContributionGarden({
     return data.calendar.filter((day) => day.date >= startDate && day.count > 0).length;
   }, [data]);
 
+  const lifetimeTotal = useMemo(
+    () => lifetimeContributions(data?.calendar ?? []),
+    [data?.calendar],
+  );
+
   const metrics = useMemo<GardenMetric[]>(() => {
     const common = [
+      {
+        key: "lifetime" as const,
+        label: "Lifetime",
+        value: lifetimeTotal,
+        detail: data?.source === "gitlab" ? "Past 12 months on GitLab" : "All public history",
+      },
       {
         key: "contributions" as const,
         label: "Contributions",
@@ -517,17 +529,19 @@ export default function ContributionGarden({
     if (data?.source === "gitlab") {
       return [
         common[0],
+        common[1],
         {
           key: "commits" as const,
           label: "Activity events",
           value: stats.totalContributions,
           detail: "GitLab public calendar",
         },
-        ...common.slice(1),
+        ...common.slice(2),
       ];
     }
     return [
       common[0],
+      common[1],
       { key: "commits", label: "Commits", value: stats.commits, detail: "Last year" },
       {
         key: "pullRequests",
@@ -536,9 +550,9 @@ export default function ContributionGarden({
         detail: "Last year",
       },
       { key: "issues", label: "Issues", value: stats.issues, detail: "Last year" },
-      ...common.slice(1),
+      ...common.slice(2),
     ];
-  }, [data?.source, rollingYearActiveDays, stats]);
+  }, [data?.source, lifetimeTotal, rollingYearActiveDays, stats]);
 
   const achievements = useMemo<GardenAchievement[]>(() => {
     const years = data?.contributionYears.length ?? 1;

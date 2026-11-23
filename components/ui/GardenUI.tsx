@@ -31,6 +31,7 @@ import {
   Sparkles,
   Sprout,
   Sun,
+  TreeDeciduous,
   Trees,
   UserRound,
   Volume2,
@@ -84,6 +85,7 @@ export type GardenEntityKind =
 
 export type GardenMetricKey =
   | "contributions"
+  | "lifetime"
   | "commits"
   | "pullRequests"
   | "issues"
@@ -208,6 +210,7 @@ interface IconButtonProps {
 
 const metricIcons: Record<GardenMetricKey, typeof Sprout> = {
   contributions: Sprout,
+  lifetime: TreeDeciduous,
   commits: Leaf,
   pullRequests: Trees,
   issues: Flower2,
