@@ -54,6 +54,28 @@ interface IslandProfile {
   terrainHeightAt: (x: number, z: number) => number;
 }
 
+type PointTuple = [number, number, number];
+
+/**
+ * The island's edge: the irregular ground rim and the cliff face below it,
+ * in the island mesh's local space (before any vertical offset the scene
+ * applies to the mesh).
+ */
+export interface PhotorealIslandEdge {
+  maximumRadius: number;
+  /** Number of angular segments in the mesh at this quality. */
+  angularSegments: number;
+  /** Horizontal distance from the island centre to the ground rim. */
+  rimRadiusAt: (angle: number) => number;
+  /**
+   * The mesh's own vertices down the edge at a segment angle: the ground rim,
+   * the base of the exposed soil band, then each cliff ring from top to the
+   * deepest ring. Snap `angle` to a multiple of TAU / angularSegments for an
+   * exact match with the mesh.
+   */
+  edgeProfileAt: (angle: number) => PointTuple[];
+}
+
 const TAU = Math.PI * 2;
 const POND_X = -2.35;
 const POND_Z = 1.25;
@@ -282,6 +304,149 @@ function createIslandProfile(radius: number, seed: number): IslandProfile {
   };
 }
 
+function exposedSoilDepthAt(profile: IslandProfile, angle: number) {
+  const { soilPhase } = profile;
+  return clamp(
+    0.3 +
+      Math.sin(angle * 5 + soilPhase) * 0.065 +
+      Math.sin(angle * 13 - soilPhase * 0.7) * 0.028,
+    0.2,
+    0.43,
+  );
+}
+
+/** The lower edge of the exposed soil band, which is the top cliff ring. */
+function soilBasePointAt(profile: IslandProfile, angle: number): PointTuple {
+  const { rimRadiusAt, soilPhase, terrainHeightAt } = profile;
+  const rimRadius = rimRadiusAt(angle);
+  const exposedSoilDepth = exposedSoilDepthAt(profile, angle);
+  const lowerRadius =
+    rimRadius *
+    (1.003 + Math.sin(angle * 7 + soilPhase * 0.4) * 0.004);
+  const x = Math.cos(angle) * lowerRadius;
+  const z = Math.sin(angle) * lowerRadius;
+  const y =
+    terrainHeightAt(
+      Math.cos(angle) * rimRadius,
+      Math.sin(angle) * rimRadius,
+    ) - exposedSoilDepth;
+  return [x, y, z];
+}
+
+function averageSoilBaseFor(profile: IslandProfile, angularSegments: number) {
+  let sum = 0;
+  for (let segment = 0; segment < angularSegments; segment += 1) {
+    sum += soilBasePointAt(profile, (segment / angularSegments) * TAU)[1];
+  }
+  return sum / angularSegments;
+}
+
+/** One cliff-ring vertex below the soil band (ring index 1 and deeper). */
+function cliffRingPointAt(
+  profile: IslandProfile,
+  ringIndex: number,
+  depth: number,
+  angle: number,
+  soilBaseY: number,
+  averageSoilBase: number,
+): PointTuple {
+  const {
+    cliffDepth,
+    maximumRadius,
+    rimRadiusAt,
+    rockPhase,
+    spineAngle,
+    stableSeed,
+  } = profile;
+  const spineOffsetX = Math.cos(spineAngle) * maximumRadius * 0.04;
+  const spineOffsetZ = Math.sin(spineAngle) * maximumRadius * 0.04;
+  const profileRadius = sampleCliffProfile(depth);
+  const circularX = Math.cos(angle) * 2.35 + depth * 2.8;
+  const circularZ = Math.sin(angle) * 2.35 - depth * 1.9;
+  const rockNoise = fbm2D(
+    circularX,
+    circularZ,
+    stableSeed + 211 + ringIndex * 17,
+    3,
+  );
+  const angularCrags =
+    Math.sin(angle * 13 + rockPhase + depth * 4.1) * 0.55 +
+    Math.sin(angle * 23 - rockPhase * 0.6 - depth * 6.3) * 0.3 +
+    rockNoise * 0.65;
+  const roughnessAmplitude = maximumRadius * (0.0045 + depth * 0.014);
+  const localRadius = Math.max(
+    maximumRadius * 0.045,
+    rimRadiusAt(angle) * profileRadius + angularCrags * roughnessAmplitude,
+  );
+  const spineAmount = Math.pow(depth, 1.35);
+  const x =
+    Math.cos(angle) * localRadius +
+    spineOffsetX * spineAmount;
+  const z =
+    Math.sin(angle) * localRadius +
+    spineOffsetZ * spineAmount;
+  const inheritedRimHeight = mix(
+    soilBaseY,
+    averageSoilBase,
+    smoothstep(0.12, 0.82, depth),
+  );
+  const verticalRockNoise =
+    Math.sin(angle * 9 - rockPhase + depth * 7.7) * 0.09 +
+    rockNoise * (0.08 + depth * 0.14);
+  const y = inheritedRimHeight - cliffDepth * depth + verticalRockNoise;
+  return [x, y, z];
+}
+
+/**
+ * Describes the island's rim and cliff face so effects such as a waterfall
+ * can follow the same mesh the Island component draws.
+ */
+export function createPhotorealIslandEdge({
+  radius,
+  quality,
+  seed,
+}: PhotorealIslandGeometryOptions): PhotorealIslandEdge {
+  const resolution = QUALITY_RESOLUTION[quality] ?? QUALITY_RESOLUTION.medium;
+  const profile = createIslandProfile(radius, seed);
+  const averageSoilBase = averageSoilBaseFor(
+    profile,
+    resolution.angularSegments,
+  );
+
+  return {
+    maximumRadius: profile.maximumRadius,
+    angularSegments: resolution.angularSegments,
+    rimRadiusAt: profile.rimRadiusAt,
+    edgeProfileAt: (angle) => {
+      const rimRadius = profile.rimRadiusAt(angle);
+      const rimX = Math.cos(angle) * rimRadius;
+      const rimZ = Math.sin(angle) * rimRadius;
+      const points: PointTuple[] = [
+        [rimX, profile.terrainHeightAt(rimX, rimZ), rimZ],
+      ];
+      const soilBase = soilBasePointAt(profile, angle);
+      points.push(soilBase);
+      for (
+        let ringIndex = 1;
+        ringIndex < resolution.cliffDepthSteps.length;
+        ringIndex += 1
+      ) {
+        points.push(
+          cliffRingPointAt(
+            profile,
+            ringIndex,
+            resolution.cliffDepthSteps[ringIndex],
+            angle,
+            soilBase[1],
+            averageSoilBase,
+          ),
+        );
+      }
+      return points;
+    },
+  };
+}
+
 /**
  * Creates a reusable continuous surface sampler. It returns `null` beyond the
  * irregular ground rim, where the floating island has no walkable top surface.
@@ -322,16 +487,15 @@ export function createPhotorealIslandGeometry({
   const resolution = QUALITY_RESOLUTION[quality] ?? QUALITY_RESOLUTION.medium;
   const angularSegments = resolution.angularSegments;
   const radialSegments = resolution.radialSegments;
+  const profile = createIslandProfile(radius, seed);
   const {
     cliffDepth,
     maximumRadius,
     rimRadiusAt,
-    rockPhase,
-    soilPhase,
     spineAngle,
     stableSeed,
     terrainHeightAt,
-  } = createIslandProfile(radius, seed);
+  } = profile;
 
   const positions: number[] = [];
   const uvs: number[] = [];
@@ -413,24 +577,7 @@ export function createPhotorealIslandGeometry({
 
   for (let segment = 0; segment <= angularSegments; segment += 1) {
     const angle = (segment / angularSegments) * TAU;
-    const rimRadius = rimRadiusAt(angle);
-    const exposedSoilDepth = clamp(
-      0.3 +
-        Math.sin(angle * 5 + soilPhase) * 0.065 +
-        Math.sin(angle * 13 - soilPhase * 0.7) * 0.028,
-      0.2,
-      0.43,
-    );
-    const lowerRadius =
-      rimRadius *
-      (1.003 + Math.sin(angle * 7 + soilPhase * 0.4) * 0.004);
-    const x = Math.cos(angle) * lowerRadius;
-    const z = Math.sin(angle) * lowerRadius;
-    const y =
-      terrainHeightAt(
-        Math.cos(angle) * rimRadius,
-        Math.sin(angle) * rimRadius,
-      ) - exposedSoilDepth;
+    const [x, y, z] = soilBasePointAt(profile, angle);
 
     soilBottomX.push(x);
     soilBottomY.push(y);
@@ -462,7 +609,6 @@ export function createPhotorealIslandGeometry({
     ringIndex += 1
   ) {
     const depth = resolution.cliffDepthSteps[ringIndex];
-    const profileRadius = sampleCliffProfile(depth);
     cliffRingStarts[ringIndex] = positions.length / 3;
 
     for (let segment = 0; segment <= angularSegments; segment += 1) {
@@ -479,39 +625,14 @@ export function createPhotorealIslandGeometry({
         continue;
       }
 
-      const circularX = Math.cos(angle) * 2.35 + depth * 2.8;
-      const circularZ = Math.sin(angle) * 2.35 - depth * 1.9;
-      const rockNoise = fbm2D(
-        circularX,
-        circularZ,
-        stableSeed + 211 + ringIndex * 17,
-        3,
-      );
-      const angularCrags =
-        Math.sin(angle * 13 + rockPhase + depth * 4.1) * 0.55 +
-        Math.sin(angle * 23 - rockPhase * 0.6 - depth * 6.3) * 0.3 +
-        rockNoise * 0.65;
-      const roughnessAmplitude = maximumRadius * (0.0045 + depth * 0.014);
-      const localRadius = Math.max(
-        maximumRadius * 0.045,
-        rimRadiusAt(angle) * profileRadius + angularCrags * roughnessAmplitude,
-      );
-      const spineAmount = Math.pow(depth, 1.35);
-      const x =
-        Math.cos(angle) * localRadius +
-        spineOffsetX * spineAmount;
-      const z =
-        Math.sin(angle) * localRadius +
-        spineOffsetZ * spineAmount;
-      const inheritedRimHeight = mix(
+      const [x, y, z] = cliffRingPointAt(
+        profile,
+        ringIndex,
+        depth,
+        angle,
         soilBottomY[segment],
         averageSoilBase,
-        smoothstep(0.12, 0.82, depth),
       );
-      const verticalRockNoise =
-        Math.sin(angle * 9 - rockPhase + depth * 7.7) * 0.09 +
-        rockNoise * (0.08 + depth * 0.14);
-      const y = inheritedRimHeight - cliffDepth * depth + verticalRockNoise;
 
       pushVertex(
         x,
