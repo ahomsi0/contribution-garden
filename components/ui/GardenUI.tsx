@@ -58,6 +58,8 @@ import {
 import type { GardenProvider } from "@/lib/garden-provider";
 import type { GitHubDataSource } from "@/lib/github-types";
 
+import { GardenLegend } from "./GardenLegend";
+
 import "./garden-ui.css";
 
 export type GardenSeason =
@@ -430,6 +432,7 @@ export interface ProfileMetricsPanelProps {
   ecosystemHealth?: number;
   onOpenProfile?: () => void;
   compact?: boolean;
+  provider?: GardenProvider;
 }
 
 export function ProfileMetricsPanel({
@@ -438,6 +441,7 @@ export function ProfileMetricsPanel({
   ecosystemHealth = 86,
   onOpenProfile,
   compact,
+  provider = "github",
 }: ProfileMetricsPanelProps) {
   const displayMetrics = compact ? metrics.slice(0, 4) : metrics.slice(0, 6);
   const initials = (profile.name || profile.login)
@@ -522,6 +526,8 @@ export function ProfileMetricsPanel({
         View field record
         <ExternalLink size={12} />
       </button>
+
+      <GardenLegend provider={provider} />
     </section>
   );
 }
@@ -1268,13 +1274,15 @@ export function GardenUI({
         />
       </div>
 
-      {presentation === "field" ? (
+      {presentation === "field" || presentation === "cinematic" ? (
         <div className="cg-profile-position">
           <ProfileMetricsPanel
             profile={profile}
             metrics={metrics}
             ecosystemHealth={ecosystemHealth}
             onOpenProfile={onOpenProfile}
+            provider={provider}
+            compact={presentation === "cinematic"}
           />
         </div>
       ) : null}
@@ -1395,6 +1403,7 @@ export function GardenUI({
           metrics={metrics}
           ecosystemHealth={ecosystemHealth}
           onOpenProfile={onOpenProfile}
+          provider={provider}
           compact
         />
       </MobileSheet>

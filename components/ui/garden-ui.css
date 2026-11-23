@@ -2029,10 +2029,13 @@
 .garden-ui[data-cinematic="true"] .cg-atmosphere-position,
 .garden-ui[data-cinematic="true"] .cg-ambient-indicator,
 .garden-ui[data-cinematic="true"] .cg-corner-coordinate {
+  /* Hidden, not just transparent, so nothing in them takes keyboard focus
+     during the flythrough (as with the walking rule). */
+  visibility: hidden;
   opacity: 0;
   transform: translateY(5px);
   pointer-events: none;
-  transition: opacity 400ms ease, transform 400ms ease;
+  transition: opacity 400ms ease, transform 400ms ease, visibility 400ms ease;
 }
 
 .garden-ui[data-cinematic="true"] .cg-topbar {
@@ -2713,6 +2716,66 @@
   }
 }
 
+/* Legend: "Reading the garden". */
+.cg-legend {
+  margin-top: 12px;
+  border-top: 1px solid var(--cg-line);
+  padding-top: 9px;
+}
+
+.cg-legend summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: #4c5d43;
+  font-family: var(--cg-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  list-style: none;
+  text-transform: uppercase;
+}
+
+.cg-legend summary::-webkit-details-marker {
+  display: none;
+}
+
+.cg-legend summary svg {
+  transition: transform 180ms ease;
+}
+
+.cg-legend[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.cg-legend ul {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cg-legend-row {
+  display: grid;
+  grid-template-columns: 13px 1fr;
+  align-items: start;
+  gap: 8px;
+  color: var(--cg-ink-soft);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.cg-legend-row svg {
+  margin-top: 1px;
+  color: var(--cg-moss);
+}
+
+.cg-legend-row strong {
+  font-weight: 650;
+  color: var(--cg-ink);
+}
+
 /* Voxel HUD: the cinematic mode shares the world's square block language. */
 .garden-ui[data-presentation="cinematic"] {
   --cg-lime: #c9d88b;
@@ -2827,6 +2890,64 @@
 .garden-ui[data-presentation="cinematic"]
   :is(.cg-enter-garden, .cg-play-button, .cg-search button):active {
   transform: translate(2px, 2px);
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-position {
+  top: 80px;
+  left: 16px;
+  width: min(300px, 24vw);
+  max-height: calc(100% - 96px);
+  overflow-y: auto;
+  /* A thin scrollbar shows only when the panel and legend overflow. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(201, 216, 139, 0.45) transparent;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-position::-webkit-scrollbar {
+  width: 4px;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-position::-webkit-scrollbar-thumb {
+  background: rgba(201, 216, 139, 0.45);
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-position::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-panel {
+  --cg-ink: #f4f1e7;
+  --cg-ink-soft: #c9cfc0;
+  --cg-line: var(--block-edge);
+  --cg-moss: var(--cg-lime);
+  border: 2px solid var(--block-edge);
+  border-radius: 0;
+  background: var(--block-panel);
+  box-shadow: 4px 4px 0 var(--block-shadow);
+  backdrop-filter: none;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-panel::before,
+.garden-ui[data-presentation="cinematic"] .cg-profile-panel::after {
+  display: none;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-panel :is(.cg-metric dd, .cg-profile-heading h1) {
+  color: #f4f1e7;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-panel :is(.cg-metric dt, .cg-metric > span, .cg-profile-heading p, .cg-profile-meta, .cg-profile-bio) {
+  color: #aab3a2;
+}
+
+.garden-ui[data-presentation="cinematic"] .cg-profile-panel :is(.cg-profile-link, .cg-legend summary) {
+  color: var(--cg-lime);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cg-legend summary svg {
+    transition: none;
+  }
 }
 
 @media (max-width: 930px) {

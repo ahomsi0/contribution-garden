@@ -24,6 +24,7 @@ import {
   type GardenWalkDirection,
   type TimelineState,
 } from "@/components/ui";
+import { entityForUI, selectionForUI } from "@/components/garden-selection";
 import { useAmbientSound } from "@/hooks/use-ambient-sound";
 import { detectGardenQuality } from "@/lib/detect-quality";
 import {
@@ -33,7 +34,6 @@ import {
 } from "@/lib/garden-provider";
 import {
   useGardenStore,
-  type SelectedGardenEntity,
   type Season,
   type TimeOfDay,
 } from "@/lib/garden-store";
@@ -152,23 +152,6 @@ function longestActiveStreak(days: ContributionDay[]) {
     }
   }
   return longest;
-}
-
-function selectionForUI(selection: GardenSelection | null): SelectedGardenEntity | null {
-  if (!selection) return null;
-
-  const kind = selection.kind === "contribution" ? "day" : selection.kind;
-
-  return {
-    id: selection.id,
-    kind,
-    title: selection.title,
-    subtitle: selection.subtitle ?? selection.kind,
-    date: selection.date,
-    count: selection.count,
-    repositories: selection.repositories,
-    details: selection.description,
-  };
 }
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -655,39 +638,10 @@ export default function ContributionGarden({
     playbackSpeed,
   ]);
 
-  const selectedEntity = useMemo<GardenEntity | null>(() => {
-    if (!selected) return null;
-    const kind: GardenEntity["kind"] =
-      selected.kind === "day"
-        ? "plant"
-        : selected.kind === "achievement"
-          ? "landmark"
-          : selected.kind === "water" ||
-              selected.kind === "wildlife" ||
-              selected.kind === "tree" ||
-              selected.kind === "flower"
-            ? selected.kind
-            : "plant";
-    return {
-      id: selected.id,
-      kind,
-      eyebrow: selected.subtitle,
-      title: selected.title,
-      description: selected.details,
-      date: selected.date,
-      contributionCount: selected.count,
-      repository: selected.repositories?.[0],
-      status: activity > 0.7 ? "Thriving" : activity > 0.4 ? "Growing" : "Resting",
-      accent:
-        kind === "flower"
-          ? "#dfad64"
-          : kind === "tree"
-            ? "#98aa73"
-            : kind === "water"
-              ? "#9bc8c2"
-              : "#d7e5a4",
-    };
-  }, [activity, selected]);
+  const selectedEntity = useMemo<GardenEntity | null>(
+    () => entityForUI(selected, activity),
+    [activity, selected],
+  );
 
   const handleWalkingChange = useCallback(
     (active: boolean) => {
