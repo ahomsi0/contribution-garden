@@ -179,11 +179,28 @@ function subscribeToReducedMotion(onChange: () => void) {
   return () => mediaQuery.removeEventListener("change", onChange);
 }
 
+function gardenPath(login: string, provider: GardenProvider): string {
+  return provider === "gitlab" ? `/u/${login}?provider=gitlab` : `/u/${login}`;
+}
+
+function gardenFromLocation(): { login: string; provider: GardenProvider } | null {
+  const match = /^\/u\/([^/]+)\/?$/.exec(window.location.pathname);
+  if (!match) return null;
+  const provider: GardenProvider =
+    new URLSearchParams(window.location.search).get("provider") === "gitlab" ? "gitlab" : "github";
+  const login = normalizeGardenHandle(decodeURIComponent(match[1]), provider);
+  return login ? { login, provider } : null;
+}
+
 export interface ContributionGardenProps {
+  initialLogin: string;
+  initialProvider: GardenProvider;
   onReady?: () => void;
 }
 
 export default function ContributionGarden({
+  initialLogin,
+  initialProvider,
   onReady,
 }: ContributionGardenProps) {
   const {
@@ -225,7 +242,7 @@ export default function ContributionGarden({
     message: string;
     tone: "info" | "error";
   } | null>(null);
-  const [searchValue, setSearchValue] = useState(username);
+  const [searchValue, setSearchValue] = useState(initialLogin);
   const [playbackSpeed, setPlaybackSpeed] = useState<1 | 2 | 4>(1);
   const [seasonMode, setSeasonMode] = useState<GardenUISeason>("auto");
   const [sceneKey, setSceneKey] = useState(0);
@@ -235,53 +252,33 @@ export default function ContributionGarden({
   // visitor enters. Walking remains an optional first-person mode.
   const [hasEnteredWorld, setHasEnteredWorld] = useState(true);
   const [interactiveSceneReady, setInteractiveSceneReady] = useState(false);
-  const hasInitialized = useRef(false);
+  const [bootstrapped, setBootstrapped] = useState(false);
   const activeGardenRequest = useRef<AbortController | null>(null);
   const hasReportedReady = useRef(false);
 
   useAmbientSound(soundEnabled, weather, reducedMotion);
 
   useEffect(() => {
-    if (hasInitialized.current) return;
-    hasInitialized.current = true;
-
-    const params = new URLSearchParams(window.location.search);
-    const requestedProvider: GardenProvider =
-      params.get("provider") === "gitlab" ? "gitlab" : "github";
-    const requestedFromUrl = normalizeGardenHandle(
-      params.get("user") ?? "",
-      requestedProvider,
-    );
-    const requested = requestedFromUrl ?? username;
-    setProvider(requestedProvider);
-    setUsername(requested);
-    setSearchValue(requested);
-    if (params.has("github")) {
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete("github");
-      window.history.replaceState({}, "", cleanUrl);
-    }
+    if (bootstrapped) return;
+    setProvider(initialProvider);
+    setUsername(initialLogin);
     const now = new Date();
     setSeason(seasonForMonth(now.getMonth()));
     const localTime = timeForHour(now.getHours());
     setTimeOfDay(localTime === "night" ? "day" : localTime);
-
+    // Seeds client-only state (local time, device quality) once on mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setQuality(detectGardenQuality());
-    // Run-once URL/store bootstrap; the guard prevents later searches from
-    // re-seeding the current garden from the URL.
-  }, [setProvider, setSeason, setTimeOfDay, setUsername, username]);
+    setBootstrapped(true);
+  }, [bootstrapped, initialLogin, initialProvider, setProvider, setSeason, setTimeOfDay, setUsername]);
 
-  // Browser Back steps through shared ?user= gardens instead of leaving.
+  // Browser Back steps through /u/<login> gardens instead of leaving.
   useEffect(() => {
     const handlePopState = () => {
-      const params = new URLSearchParams(window.location.search);
-      const requestedProvider: GardenProvider =
-        params.get("provider") === "gitlab" ? "gitlab" : "github";
-      const requested = normalizeGardenHandle(
-        params.get("user") ?? "",
-        requestedProvider,
-      );
-      if (!requested) return;
+      const target = gardenFromLocation();
+      if (!target) return;
+      const requested = target.login;
+      const requestedProvider = target.provider;
       const current = useGardenStore.getState();
       if (
         requested === current.username &&
@@ -301,6 +298,7 @@ export default function ContributionGarden({
   }, [setPlaying, setProvider, setSelected, setTimeline, setUsername]);
 
   useEffect(() => {
+    if (!bootstrapped) return;
     const controller = new AbortController();
     activeGardenRequest.current = controller;
     setStatus("loading");
@@ -366,6 +364,7 @@ export default function ContributionGarden({
     onReady,
     provider,
     username,
+    bootstrapped,
   ]);
 
   const archiveFrames = useMemo(
@@ -745,11 +744,8 @@ export default function ContributionGarden({
       setFlythrough(false);
       setIsWalking(false);
       setWalkInput(emptyWalkInput());
-      const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set("user", normalized);
-      nextUrl.searchParams.set("provider", provider);
       // Push so browser Back returns to the previously viewed garden.
-      window.history.pushState({}, "", nextUrl);
+      window.history.pushState({}, "", gardenPath(normalized, provider));
     },
     [
       provider,
