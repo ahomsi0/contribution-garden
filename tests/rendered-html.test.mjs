@@ -80,6 +80,8 @@ test("server-renders the Contribution Garden shell", async () => {
   assert.match(html, /Contribution Garden/);
   assert.match(html, /A living GitHub and GitLab ecosystem/i);
   assert.match(html, /Enter the garden/i);
+  assert.match(html, /Explore gardens by country/);
+  assert.match(html, /href="\/country\/germany"/);
   assert.match(html, /garden-hero-v5-lush\.webp/);
   assert.match(html, /og-v2\.png/);
   assert.doesNotMatch(html, /data-contribution-garden/);
@@ -797,4 +799,110 @@ test("completes GitHub App OAuth without exposing tokens and preserves the rolli
     globalThis.fetch = originalFetch;
     restoreEnvironment();
   }
+});
+
+const fixtureMonths = Array.from({ length: 12 }, (_, i) => i + 1);
+const fixtureSnapshot = (slug, name) => ({
+  version: 1,
+  country: { slug, name },
+  generatedAt: new Date().toISOString(),
+  candidateCount: 2,
+  users: [
+    { rank: 1, id: 1, login: "first-gardener", name: "First Gardener", avatarUrl: "https://avatars.test/1?v=4", score: 78, years: [{ year: 2025, months: fixtureMonths }] },
+    { rank: 2, id: 2, login: "second-gardener", name: null, avatarUrl: "https://avatars.test/2?v=4", score: 12, years: [{ year: 2026, months: fixtureMonths.map(() => 1) }] },
+  ],
+});
+
+function stubRankings(baseUrl, files) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.startsWith(baseUrl)) {
+      const body = files[url.slice(baseUrl.length + 1)];
+      return body ? Response.json(body) : new Response("missing", { status: 404 });
+    }
+    return originalFetch(input, init);
+  };
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
+
+test("renders a country board from its snapshot", async () => {
+  const baseUrl = "https://rankings-board.test";
+  const restoreEnvironment = setTestEnvironment({ RANKINGS_BASE_URL: baseUrl });
+  const restoreFetch = stubRankings(baseUrl, {
+    "rankings/germany.json": fixtureSnapshot("germany", "Germany"),
+  });
+  try {
+    const app = await worker();
+    const response = await app.fetch(
+      new Request("http://localhost/country/germany", { headers: { accept: "text/html" } }),
+      environment,
+      context,
+    );
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /Germany/);
+    assert.match(html, /First Gardener/);
+    assert.match(html, /@(?:<!-- -->)?second-gardener/);
+    assert.match(html, /href="\/u\/first-gardener\?from=germany"/);
+    assert.match(html, /<title>2025 · 78 contributions<\/title>/);
+  } finally {
+    restoreFetch();
+    restoreEnvironment();
+  }
+});
+
+test("shows a planting message when a country has no snapshot", async () => {
+  const baseUrl = "https://rankings-empty.test";
+  const restoreEnvironment = setTestEnvironment({ RANKINGS_BASE_URL: baseUrl });
+  const restoreFetch = stubRankings(baseUrl, {});
+  try {
+    const app = await worker();
+    const response = await app.fetch(
+      new Request("http://localhost/country/japan", { headers: { accept: "text/html" } }),
+      environment,
+      context,
+    );
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /This board is being planted/);
+  } finally {
+    restoreFetch();
+    restoreEnvironment();
+  }
+});
+
+test("returns 404 for an unknown country", async () => {
+  const app = await worker();
+  const response = await app.fetch(
+    new Request("http://localhost/country/atlantis", { headers: { accept: "text/html" } }),
+    environment,
+    context,
+  );
+  assert.equal(response.status, 404);
+});
+
+test("redirects legacy ?user= links to /u/<login>", async () => {
+  const app = await worker();
+  const response = await app.fetch(
+    new Request("http://localhost/?user=Octocat&provider=github", { redirect: "manual" }),
+    environment,
+    context,
+  );
+  assert.ok([302, 303, 307, 308].includes(response.status), String(response.status));
+  assert.equal(new URL(response.headers.get("location"), "http://localhost").pathname, "/u/octocat");
+});
+
+test("serves a user garden page", async () => {
+  const app = await worker();
+  const response = await app.fetch(
+    new Request("http://localhost/u/octocat?from=germany", { headers: { accept: "text/html" } }),
+    environment,
+    context,
+  );
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /href="\/country\/germany"/);
+  assert.match(html, /@octocat&#x27;s garden|@octocat's garden/);
 });
