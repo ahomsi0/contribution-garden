@@ -12,6 +12,7 @@ export class GitHubRequestError extends Error {
   constructor(
     message: string,
     readonly status: 401 | 404 | 429 | 502,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "GitHubRequestError";
@@ -30,9 +31,10 @@ export async function fetchGraphQL<T>(
   authorization: GitHubAuthorization,
   query: string,
   variables: Record<string, unknown>,
+  options: { timeoutMs?: number } = {},
 ): Promise<T> {
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => abortController.abort(), options.timeoutMs ?? REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(GITHUB_GRAPHQL_URL, {
@@ -51,10 +53,15 @@ export async function fetchGraphQL<T>(
       // GitHub reports exhausted rate limits as 403 *or* 429; disambiguate via
       // the rate-limit headers so credential-scope problems are not misread as
       // quota exhaustion.
+      // A 403 carrying retry-after is GitHub's secondary rate limit signal.
+      const retryAfterHeader = response.headers.get("retry-after");
+      const parsedRetryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
+      const retryAfterSeconds =
+        Number.isFinite(parsedRetryAfter) && parsedRetryAfter > 0 ? parsedRetryAfter : undefined;
       const rateLimited =
         response.status === 429 ||
         (response.status === 403 &&
-          response.headers.get("x-ratelimit-remaining") === "0");
+          (response.headers.get("x-ratelimit-remaining") === "0" || retryAfterHeader !== null));
       const status =
         response.status === 401 ? 401 : rateLimited ? 429 : 502;
       logger.warn("github_graphql_http_error", {
@@ -65,6 +72,7 @@ export async function fetchGraphQL<T>(
       throw new GitHubRequestError(
         `GitHub GraphQL request failed with status ${response.status}.`,
         status,
+        retryAfterSeconds,
       );
     }
 
