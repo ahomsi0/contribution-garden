@@ -11,6 +11,7 @@ import {
   resolveGitHubSession,
   serializeClearGitHubSessionCookie,
 } from "@/lib/github-auth";
+import { contributionHistoryQuery } from "@/lib/github/history-query";
 import { createMockGitHubData } from "@/lib/mock-github";
 import { logger } from "@/lib/logger";
 import { checkRateLimit, clientIpFromRequest } from "@/lib/rate-limit";
@@ -143,32 +144,6 @@ const REPOSITORY_PAGE_QUERY = /* GraphQL */ `
   }
 `;
 
-const HISTORY_FIELDS = /* GraphQL */ `
-  totalCommitContributions
-  totalIssueContributions
-  totalPullRequestContributions
-  totalPullRequestReviewContributions
-  restrictedContributionsCount
-  contributionCalendar {
-    totalContributions
-    weeks {
-      contributionDays {
-        date
-        weekday
-        contributionCount
-        contributionLevel
-        color
-      }
-    }
-  }
-  commitContributionsByRepository(maxRepositories: 25) {
-    repository { nameWithOwner isPrivate }
-    contributions(first: 100) {
-      nodes { occurredAt commitCount }
-    }
-  }
-`;
-
 interface GraphQLResponse<T> {
   data?: T;
   errors?: Array<{ message?: string; type?: string }>;
@@ -285,7 +260,7 @@ interface RawContributionCollection {
     totalContributions: number;
     weeks: Array<{ contributionDays: RawContributionDay[] }>;
   };
-  commitContributionsByRepository: Array<{
+  commitContributionsByRepository?: Array<{
     repository: { nameWithOwner: string; isPrivate: boolean };
     contributions: {
       nodes: Array<{ occurredAt: string; commitCount: number } | null>;
@@ -434,32 +409,6 @@ function chunk<T>(values: readonly T[], size: number): T[][] {
   return chunks;
 }
 
-function contributionHistoryQuery(years: readonly number[], now: Date): string {
-  const currentYear = now.getUTCFullYear();
-  const selections = years
-    .map((year) => {
-      const from = `${year}-01-01T00:00:00.000Z`;
-      const to =
-        year === currentYear
-          ? now.toISOString()
-          : new Date(Date.UTC(year + 1, 0, 1) - 1_000).toISOString();
-      return `
-        y${year}: contributionsCollection(from: "${from}", to: "${to}") {
-          ${HISTORY_FIELDS}
-        }
-      `;
-    })
-    .join("\n");
-
-  return `
-    query ContributionGardenHistory($login: String!) {
-      user(login: $login) {
-        ${selections}
-      }
-    }
-  `;
-}
-
 async function fetchContributionHistory(
   authorization: GitHubAuthorization,
   login: string,
@@ -602,7 +551,7 @@ function normalizeCalendar(
   const repositoriesByDate = new Map<string, Set<string>>();
 
   for (const collection of collections.values()) {
-    for (const repositoryContributions of collection.commitContributionsByRepository) {
+    for (const repositoryContributions of collection.commitContributionsByRepository ?? []) {
       if (repositoryContributions.repository.isPrivate) continue;
       for (const contribution of repositoryContributions.contributions.nodes) {
         if (!contribution || contribution.commitCount <= 0) continue;
