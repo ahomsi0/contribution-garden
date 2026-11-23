@@ -34,6 +34,7 @@ interface GardenState {
   setProvider: (provider: GardenProvider) => void;
   setUsername: (username: string) => void;
   clearData: () => void;
+  resetGarden: () => void;
   setData: (data: GitHubGardenData) => void;
   setStatus: (status: GardenState["status"], error?: string | null) => void;
   setSeason: (season: Season) => void;
@@ -48,7 +49,7 @@ interface GardenState {
 
 export const useGardenStore = create<GardenState>((set) => ({
   provider: "github",
-  username: "octocat",
+  username: "",
   data: null,
   status: "idle",
   error: null,
@@ -63,6 +64,16 @@ export const useGardenStore = create<GardenState>((set) => ({
   setProvider: (provider) => set({ provider }),
   setUsername: (username) => set({ username }),
   clearData: () => set({ data: null }),
+  resetGarden: () =>
+    set({
+      data: null,
+      status: "idle",
+      error: null,
+      selected: null,
+      timeline: 100,
+      isPlaying: false,
+      isFlythrough: false,
+    }),
   setData: (data) => set({ data, status: "ready", error: null }),
   setStatus: (status, error = null) => set({ status, error }),
   setSeason: (season) => set({ season }),

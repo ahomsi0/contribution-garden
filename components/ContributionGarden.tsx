@@ -230,6 +230,7 @@ export default function ContributionGarden({
     setProvider,
     setUsername,
     clearData,
+    resetGarden,
     setData,
     setStatus,
     setSeason,
@@ -270,6 +271,7 @@ export default function ContributionGarden({
 
   useEffect(() => {
     if (bootstrapped) return;
+    resetGarden();
     setProvider(initialProvider);
     setUsername(initialLogin);
     const now = new Date();
@@ -280,7 +282,7 @@ export default function ContributionGarden({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setQuality(detectGardenQuality());
     setBootstrapped(true);
-  }, [bootstrapped, initialLogin, initialProvider, setProvider, setSeason, setTimeOfDay, setUsername]);
+  }, [bootstrapped, initialLogin, initialProvider, resetGarden, setProvider, setSeason, setTimeOfDay, setUsername]);
 
   // Browser Back steps through /u/<login> gardens instead of leaving.
   useEffect(() => {
@@ -923,6 +925,19 @@ export default function ContributionGarden({
     repositories: data?.profile.repositories,
     stars: data?.profile.stars,
   };
+  if (!bootstrapped) {
+    // Hold back the scene until the store has been reset for this garden, so a
+    // previously opened garden is never painted for a frame.
+    return (
+      <main className="garden-app" aria-label="Contribution Garden">
+        <div className="garden-loading">
+          <div className="garden-loading__mark" />
+          <span className="sr-only">Growing {initialLogin}&apos;s garden…</span>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="garden-app" aria-label="Contribution Garden">
       <GardenUI
