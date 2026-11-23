@@ -129,18 +129,42 @@ are only searched.
 
 ## Experience
 
-- Procedural 3D terrain, pond, paths, vegetation, trees, flowers, and wildlife
-- GitHub and GitLab username search, with shareable garden URLs at `/u/<login>`
-- Country leaderboards on the landing page, with every ranked person drawn as year beds
-- Multi-year growth timeline with playback controls
+### Reading a garden
+
+Each garden is drawn from the person's real history, so a light contributor
+and a heavy one look clearly different:
+
+| In the garden | Comes from |
+| --- | --- |
+| Island size | How many years of history there are |
+| A tree for each year | That year's contributions; bigger trees mean busier years |
+| The great tree | Lifetime contributions; it glows after a 365-day streak |
+| Meadow beds along the year rings | Every day with contributions; denser and brighter means more |
+| Wildflowers | Pull requests and issues in the past 12 months |
+| Butterflies and birds | Recent activity |
+| Fireflies | A longest streak of 30 days or more |
+| Pond size | Public repositories |
+
+A "Reading the garden" legend in the stats panel explains this on screen.
+Clicking any tree, flower, meadow bed or the pond shows its details.
+
+### Features
+
+- A lush, sunlit floating island with a pond that spills into a waterfall, the
+  same look on every device (quality tiers only change density, shadows and
+  post-processing)
+- GitHub and GitLab username search, with shareable garden URLs at
+  `/u/<login>` (GitLab: `/gitlab?user=<handle>`)
+- Country leaderboards on the landing page, with every ranked person drawn as
+  year beds
+- Multi-year growth timeline with playback; trees appear in place as their
+  year arrives
 - Spring, summer, autumn, and winter ecosystems
 - Sun, rain, wind, fog, and snow weather systems
-- Morning, daylight, sunset, and night lighting
-- Clickable contribution, pull-request, issue, water, and achievement specimens
-- Activity-driven water health and vegetation density
-- Natural-event achievements for streaks and contribution milestones
-- Cinematic fly-through, ambient sound, and local screenshot export
-- Responsive desktop and mobile controls with reduced-motion support
+- Morning, daylight, and sunset lighting
+- Cinematic fly-through, walk-through mode, ambient sound, and local
+  screenshot export
+- Responsive desktop and mobile layouts with reduced-motion support
 
 ## Commands
 
