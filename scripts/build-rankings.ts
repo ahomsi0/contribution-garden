@@ -9,11 +9,13 @@ const CANDIDATE_LIMIT = 1_000;
 const PUBLIC_LIMIT = 256;
 
 async function main(): Promise<number> {
+  const startedAtMs = Date.now();
   const { values } = parseArgs({
     options: {
       country: { type: "string" },
       limit: { type: "string" },
       out: { type: "string" },
+      "stop-starting-after": { type: "string" },
     },
   });
 
@@ -21,6 +23,26 @@ async function main(): Promise<number> {
   if (!token) {
     console.error("RANKINGS_GITHUB_TOKEN is not set.");
     return 1;
+  }
+
+  if (values.limit !== undefined) {
+    const parsed = Number(values.limit);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      console.error("--limit must be a positive integer.");
+      return 1;
+    }
+    if (!values.out) {
+      console.error("--limit is only allowed with --out, so a partial board is never published.");
+      return 1;
+    }
+  }
+  let deadlineMinutes: number | null = null;
+  if (values["stop-starting-after"] !== undefined) {
+    deadlineMinutes = Number(values["stop-starting-after"]);
+    if (!Number.isFinite(deadlineMinutes) || deadlineMinutes <= 0) {
+      console.error("--stop-starting-after must be a positive number of minutes.");
+      return 1;
+    }
   }
 
   let store;
@@ -49,7 +71,11 @@ async function main(): Promise<number> {
   const order = COUNTRIES.map((country) => country.slug);
   let failures = 0;
 
-  for (const country of queue) {
+  for (const [position, country] of queue.entries()) {
+    if (deadlineMinutes !== null && (Date.now() - startedAtMs) / 60_000 >= deadlineMinutes) {
+      console.log(`Deadline reached; leaving ${queue.length - position} countries for the next run.`);
+      break;
+    }
     const startedAt = Date.now();
     try {
       const snapshot: CountrySnapshot = await buildCountry(country, {
@@ -69,6 +95,10 @@ async function main(): Promise<number> {
     } catch (error) {
       failures += 1;
       console.error(`${country.slug}: failed — ${(error as Error).message}`);
+      if ((error as { status?: unknown })?.status === 401) {
+        console.error("GitHub rejected the token; stopping.");
+        break;
+      }
     }
   }
 
