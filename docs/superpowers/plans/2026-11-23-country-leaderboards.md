@@ -3503,3 +3503,20 @@ With `npx --yes serve@14.2.4 ./tmp/rankings -l 4010 --cors` and `RANKINGS_BASE_U
 - [ ] **Step 4: Report**
 
 Summarise for the user: what shipped, test counts, measured load time for a heavy user (Task 3), and the one-time setup they must do (Blob store; secrets `RANKINGS_GITHUB_TOKEN`, `BLOB_READ_WRITE_TOKEN`; variable and Vercel env `RANKINGS_BASE_URL`; then run the "Build rankings" workflow manually once). Note that the first full build of all 10 countries may need two daily runs because of GitHub's hourly rate limit; countries publish as they finish.
+
+## Amendments made during execution
+
+- Repository pages were capped at 3 (`1a98034` first used 300 repositories). The real cause of the ~39 s heavy-user loads was sequential repository paging, not the history query.
+- Countries were split into `names` (country-level, also used to exclude people whose location names another configured country) and `cities` (search only), replacing the single `aliases` list.
+- Validators were tightened for snapshots and merges, and the year floor is 1970 so pre-2008 contribution years are accepted.
+- Unparseable ranking timestamps are treated as stale.
+- Retries were added for rate limits, including GitHub secondary rate limits, and for transient errors and timeouts; timeouts were lengthened.
+- History is fetched in 4-year chunks, with boundary-day filtering so days at chunk edges are not double counted.
+- Build guards: no empty or shrunken boards, known users are kept through errors, workers stop on fatal errors, and snapshots are validated before writing.
+- The build fails fast when the Blob token and `RANKINGS_BASE_URL` point at different stores.
+- The CLI got `--limit` safety (only allowed with `--out`), `--stop-starting-after` (a start deadline), a stop on a 401, and argument validation; the workflow was hardened to match.
+- The lifetime card is hidden for GitLab gardens, whose calendar covers only 12 months.
+- Gardens now open at `/u/<login>`, and the shared-link double load was fixed.
+- The landing page became the country directory, with route tests for the leaderboard, landing, and garden pages.
+- Year-bed coordinates are rounded, to fix a hydration mismatch between workerd and the browser.
+- The desktop garden page shows no stats panel. This predates this work; follow-up for the 3D restyle spec.
