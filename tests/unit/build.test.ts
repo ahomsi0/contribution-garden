@@ -125,11 +125,17 @@ test("a single failing user is skipped, an auth failure aborts", async () => {
     now,
     candidateLimit: 10,
     publicLimit: 10,
-    search: async () => [{ id: 1, login: "boom" }],
+    search: async () => [{ id: 1, login: "boom" }, { id: 2, login: "fine" }],
     log: () => {},
   };
-  const skipped = await buildCountry(germany, { ...base, fetchUser: async () => { throw new Error("weird"); } });
-  assert.equal(skipped.users.length, 0);
+  const skipped = await buildCountry(germany, {
+    ...base,
+    fetchUser: async (login) => {
+      if (login === "boom") throw new Error("weird");
+      return { id: 2, login, name: null, avatarUrl: "https://x.test/avatar", location: null, years: [{ year: 2026, months: months(1) }] };
+    },
+  });
+  assert.deepEqual(skipped.users.map((u) => u.login), ["fine"]);
   const authError = Object.assign(new Error("bad credentials"), { status: 401 });
   await assert.rejects(buildCountry(germany, { ...base, fetchUser: async () => { throw authError; } }), /bad credentials/);
 });
@@ -149,9 +155,105 @@ test("fails the country when too many candidates error", async () => {
       },
       log: () => {},
     }),
-    /10 of 10 candidates failed/,
+    /\d+ of 10 candidates failed/,
   );
   assert.equal(store.files["rankings/germany.json"], undefined, "nothing published");
+});
+
+const previousUser = (id: number) => ({
+  rank: id,
+  id,
+  login: `u${id}`,
+  name: null,
+  avatarUrl: "https://x.test/avatar",
+  score: 60,
+  years: [{ year: 2020, months: months(5) }],
+});
+const previousBoard = (count: number): CountrySnapshot => ({
+  version: 1,
+  country: { slug: "germany", name: "Germany" },
+  generatedAt: "2026-11-22T03:00:00.000Z",
+  candidateCount: count,
+  users: Array.from({ length: count }, (_, i) => previousUser(i + 1)),
+});
+
+test("refuses to publish an empty board", async () => {
+  const store = memoryStore();
+  await assert.rejects(
+    buildCountry(germany, { store, now, candidateLimit: 10, publicLimit: 10, search: async () => [], fetchUser: async () => null, log: () => {} }),
+    /no users ranked/,
+  );
+  assert.deepEqual(store.files, {});
+});
+
+test("refuses to publish a board that lost more than half its users", async () => {
+  const previous = previousBoard(10);
+  const store = memoryStore({ "rankings/germany.candidates.json": previous });
+  const files = { ...store.files };
+  await assert.rejects(
+    buildCountry(germany, {
+      store,
+      now,
+      candidateLimit: 10,
+      publicLimit: 10,
+      search: async () => previous.users.map((u) => ({ id: u.id, login: u.login })),
+      fetchUser: async (login) => {
+        const id = Number(login.slice(1));
+        if (id <= 6) return null;
+        return { id, login, name: null, avatarUrl: "https://x.test/avatar", location: null, years: [{ year: 2026, months: months(1) }] };
+      },
+      log: () => {},
+    }),
+    /shrank from 10 to 4/,
+  );
+  assert.deepEqual(store.files, files);
+});
+
+test("keeps a known user's previous data through a transient error", async () => {
+  const previous: CountrySnapshot = { ...previousBoard(1), users: [{ ...previousUser(7), login: "old" }] };
+  const store = memoryStore({ "rankings/germany.candidates.json": previous });
+  const logs: string[] = [];
+  const snapshot = await buildCountry(germany, {
+    store,
+    now,
+    candidateLimit: 10,
+    publicLimit: 10,
+    search: async () => [{ id: 7, login: "old" }],
+    fetchUser: async () => {
+      throw new Error("flaky");
+    },
+    log: (m) => logs.push(m),
+  });
+  assert.equal(snapshot.users.length, 1);
+  assert.equal(snapshot.users[0].id, 7);
+  assert.equal(snapshot.users[0].score, 60);
+  assert.deepEqual(snapshot.users[0].years, [{ year: 2020, months: months(5) }]);
+  assert.ok(logs.some((m) => m.includes("kept previous data for old")));
+});
+
+test("a fatal error stops the other workers from starting new users", async () => {
+  const candidates = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, login: `u${i + 1}` }));
+  let calls = 0;
+  await assert.rejects(
+    buildCountry(germany, {
+      store: memoryStore(),
+      now,
+      candidateLimit: 20,
+      publicLimit: 20,
+      concurrency: 4,
+      search: async () => candidates,
+      fetchUser: async () => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error("bad credentials"), { status: 401 });
+        await new Promise((r) => setTimeout(r, 5));
+        return null;
+      },
+      log: () => {},
+    }),
+    /bad credentials/,
+  );
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(calls <= 7, `expected at most 7 fetchUser calls, got ${calls}`);
 });
 
 test("orders countries never built first, then oldest", () => {

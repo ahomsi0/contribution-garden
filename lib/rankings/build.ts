@@ -42,8 +42,13 @@ export async function buildCountry(country: CountryConfig, deps: BuildDeps): Pro
   const candidates = await deps.search(searchTerms(country), deps.candidateLimit);
   deps.log(`${country.slug}: ${candidates.length} candidates`);
 
+  // Publishing a board that silently lost a big share of people is worse than
+  // keeping yesterday's: fail the country so its previous files stay in place.
+  const maxFailures = Math.max(5, Math.floor(candidates.length * 0.2));
   let failures = 0;
+  let stopped = false;
   const results = await mapWithConcurrency(candidates, deps.concurrency ?? 4, async (candidate) => {
+    if (stopped) return null;
     const known = previousById.get(candidate.id);
     try {
       const fetched = await deps.fetchUser(candidate.login, known ? refetchFrom : null, deps.now);
@@ -63,22 +68,41 @@ export async function buildCountry(country: CountryConfig, deps: BuildDeps): Pro
       };
       return user;
     } catch (error) {
-      if (isFatal(error)) throw error;
+      if (isFatal(error)) {
+        stopped = true;
+        throw error;
+      }
+      if (known) {
+        deps.log(`${country.slug}: kept previous data for ${candidate.login} (${(error as Error).message})`);
+        const kept: UnrankedUser = {
+          id: known.id,
+          login: known.login,
+          name: known.name,
+          avatarUrl: known.avatarUrl,
+          years: known.years,
+          score: scoreFromYears(known.years),
+        };
+        return kept;
+      }
       failures += 1;
+      if (failures > maxFailures) stopped = true;
       deps.log(`${country.slug}: skipped ${candidate.login} (${(error as Error).message})`);
       return null;
     }
   });
 
-  // Publishing a board that silently lost a big share of people is worse than
-  // keeping yesterday's: fail the country so its previous files stay in place.
-  const maxFailures = Math.max(5, Math.floor(candidates.length * 0.2));
   if (failures > maxFailures) {
     throw new Error(`${country.slug}: ${failures} of ${candidates.length} candidates failed`);
   }
 
   const users = results.filter((user): user is UnrankedUser => user !== null);
   const ranked = rankUsers(users, users.length);
+  if (ranked.length === 0) {
+    throw new Error(`${country.slug}: no users ranked`);
+  }
+  if (previous && ranked.length < Math.ceil(previous.users.length * 0.5)) {
+    throw new Error(`${country.slug}: board shrank from ${previous.users.length} to ${ranked.length}`);
+  }
   const base = {
     version: 1 as const,
     country: { slug: country.slug, name: country.name },
