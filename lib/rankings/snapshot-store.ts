@@ -25,8 +25,9 @@ export function directoryStore(root: string): SnapshotStore {
   };
 }
 
-export function blobStore(options: { token: string; baseUrl: string }): SnapshotStore {
+export function blobStore(options: { token: string; baseUrl: string; putImpl?: typeof put }): SnapshotStore {
   const base = options.baseUrl.replace(/\/+$/, "");
+  const putBlob = options.putImpl ?? put;
   return {
     async read(pathname) {
       const response = await fetch(`${base}/${pathname}?t=${Date.now()}`, { cache: "no-store" });
@@ -35,7 +36,7 @@ export function blobStore(options: { token: string; baseUrl: string }): Snapshot
       return response.json();
     },
     async write(pathname, data) {
-      await put(pathname, JSON.stringify(data), {
+      const result = await putBlob(pathname, JSON.stringify(data), {
         access: "public",
         addRandomSuffix: false,
         allowOverwrite: true,
@@ -43,6 +44,11 @@ export function blobStore(options: { token: string; baseUrl: string }): Snapshot
         cacheControlMaxAge: 300,
         token: options.token,
       });
+      const written = new URL(result.url).origin;
+      const expected = new URL(base).origin;
+      if (written !== expected) {
+        throw new Error(`Blob store mismatch: wrote to ${written} but RANKINGS_BASE_URL is ${expected}`);
+      }
     },
   };
 }
