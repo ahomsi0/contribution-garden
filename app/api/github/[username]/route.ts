@@ -18,7 +18,8 @@ import { checkRateLimit, clientIpFromRequest } from "@/lib/rate-limit";
 
 const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
 const REQUEST_TIMEOUT_MS = 15_000;
-const MAX_REPOSITORY_PAGES = 10;
+// Each page is ~3.5 s because of per-repo languages; repos are sorted by stars, so the top 300 cover star and language totals for nearly everyone.
+const MAX_REPOSITORY_PAGES = 3;
 const HISTORY_CHUNK_SIZE = 4;
 const HISTORY_CONCURRENCY = 3;
 const FALLBACK_COLOR = "#7a8b78";
