@@ -906,3 +906,38 @@ test("serves a user garden page", async () => {
   assert.match(html, /href="\/country\/germany"/);
   assert.match(html, /@octocat&#x27;s garden|@octocat's garden/);
 });
+
+test("redirects legacy GitLab links to /gitlab?user=", async () => {
+  const app = await worker();
+  const response = await app.fetch(
+    new Request("http://localhost/?user=john.doe&provider=gitlab", { redirect: "manual" }),
+    environment,
+    context,
+  );
+  assert.ok([302, 303, 307, 308].includes(response.status), String(response.status));
+  const target = new URL(response.headers.get("location"), "http://localhost");
+  assert.equal(target.pathname + target.search, "/gitlab?user=john.doe");
+});
+
+test("serves a GitLab garden page with a dotted handle", async () => {
+  const app = await worker();
+  const response = await app.fetch(
+    new Request("http://localhost/gitlab?user=john.doe", { headers: { accept: "text/html" } }),
+    environment,
+    context,
+  );
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /@john\.doe&#x27;s garden|@john\.doe's garden/);
+});
+
+test("shows the not-growing state on /gitlab without a user", async () => {
+  const app = await worker();
+  const response = await app.fetch(
+    new Request("http://localhost/gitlab", { headers: { accept: "text/html" } }),
+    environment,
+    context,
+  );
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /Nothing growing here/);
+});

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import GardenRoute from "@/components/GardenRoute";
-import { normalizeGardenHandle, type GardenProvider } from "@/lib/garden-provider";
+import { normalizeGardenHandle } from "@/lib/garden-provider";
 import { findCountry } from "@/lib/rankings/countries";
 
 interface UserPageProps {
@@ -11,10 +11,9 @@ interface UserPageProps {
 
 async function resolve({ params, searchParams }: UserPageProps) {
   const [{ login }, query] = await Promise.all([params, searchParams]);
-  const provider: GardenProvider = query.provider === "gitlab" ? "gitlab" : "github";
-  const handle = normalizeGardenHandle(decodeURIComponent(login), provider);
+  const handle = normalizeGardenHandle(decodeURIComponent(login), "github");
   const from = typeof query.from === "string" ? findCountry(query.from) : undefined;
-  return { handle, provider, from };
+  return { handle, from };
 }
 
 export async function generateMetadata(props: UserPageProps): Promise<Metadata> {
@@ -23,12 +22,12 @@ export async function generateMetadata(props: UserPageProps): Promise<Metadata> 
 }
 
 export default async function UserGardenPage(props: UserPageProps) {
-  const { handle, provider, from } = await resolve(props);
+  const { handle, from } = await resolve(props);
   if (!handle) notFound();
   return (
     <GardenRoute
       login={handle}
-      provider={provider}
+      provider="github"
       backHref={from ? `/country/${from.slug}` : "/"}
       backLabel={from ? from.name : "Home"}
     />

@@ -180,16 +180,26 @@ function subscribeToReducedMotion(onChange: () => void) {
 }
 
 function gardenPath(login: string, provider: GardenProvider): string {
-  return provider === "gitlab" ? `/u/${login}?provider=gitlab` : `/u/${login}`;
+  return provider === "gitlab" ? `/gitlab?user=${encodeURIComponent(login)}` : `/u/${login}`;
 }
 
 function gardenFromLocation(): { login: string; provider: GardenProvider } | null {
-  const match = /^\/u\/([^/]+)\/?$/.exec(window.location.pathname);
-  if (!match) return null;
-  const provider: GardenProvider =
-    new URLSearchParams(window.location.search).get("provider") === "gitlab" ? "gitlab" : "github";
-  const login = normalizeGardenHandle(decodeURIComponent(match[1]), provider);
-  return login ? { login, provider } : null;
+  try {
+    const { pathname, search } = window.location;
+    const githubMatch = /^\/u\/([^/]+)\/?$/.exec(pathname);
+    if (githubMatch) {
+      const login = normalizeGardenHandle(decodeURIComponent(githubMatch[1]), "github");
+      return login ? { login, provider: "github" } : null;
+    }
+    if (/^\/gitlab\/?$/.test(pathname)) {
+      const user = new URLSearchParams(search).get("user");
+      const login = user ? normalizeGardenHandle(user, "gitlab") : null;
+      return login ? { login, provider: "gitlab" } : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export interface ContributionGardenProps {

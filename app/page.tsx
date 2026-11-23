@@ -16,7 +16,7 @@ export default async function Home({ searchParams }: HomeProps) {
   if (typeof params.user === "string") {
     const provider = params.provider === "gitlab" ? "gitlab" : "github";
     const handle = normalizeGardenHandle(params.user, provider);
-    if (handle) redirect(provider === "gitlab" ? `/u/${handle}?provider=gitlab` : `/u/${handle}`);
+    if (handle) redirect(provider === "gitlab" ? `/gitlab?user=${encodeURIComponent(handle)}` : `/u/${handle}`);
   }
 
   const index = await getRankingsIndex();
