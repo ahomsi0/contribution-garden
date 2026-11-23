@@ -22,6 +22,33 @@ export const SEARCH_THROTTLE_MS = 2_100;
 export const defaultSleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+const MAX_ATTEMPTS = 3;
+const MAX_RETRY_WAIT_MS = 10 * 60_000;
+
+export async function withRetry<T>(
+  operation: () => Promise<T>,
+  sleep: (ms: number) => Promise<void>,
+): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!(error instanceof GitHubRequestError) || attempt >= MAX_ATTEMPTS) throw error;
+      if (error.status === 429) {
+        await sleep(Math.min((error.retryAfterSeconds ?? 60) * 1_000, MAX_RETRY_WAIT_MS));
+      } else if (error.status === 502) {
+        await sleep(5_000 * attempt);
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+}
+
 async function searchAlias(
   alias: string,
   maxResults: number,
@@ -38,18 +65,39 @@ async function searchAlias(
     url.searchParams.set("order", "desc");
     url.searchParams.set("per_page", String(SEARCH_PAGE_SIZE));
     url.searchParams.set("page", String(page));
-    const response = await deps.fetchImpl(url, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${deps.token}`,
-        "User-Agent": "Contribution-Garden-Rankings",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`GitHub search failed with status ${response.status} for "${alias}".`);
-    }
-    const body = (await response.json()) as { items?: Array<{ id: number; login: string }> };
+    const body = await withRetry(async () => {
+      let response: Response;
+      try {
+        response = await deps.fetchImpl(url, {
+          headers: {
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${deps.token}`,
+            "User-Agent": "Contribution-Garden-Rankings",
+            "X-GitHub-Api-Version": "2022-11-28",
+          },
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch (error) {
+        if (isTimeoutError(error)) throw new GitHubRequestError("GitHub search timed out.", 502);
+        throw error;
+      }
+      if (!response.ok) {
+        const retryAfterHeader = response.headers.get("retry-after");
+        const parsed = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
+        const retryAfterSeconds = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+        const rateLimited =
+          response.status === 429 ||
+          (response.status === 403 &&
+            (response.headers.get("x-ratelimit-remaining") === "0" || retryAfterHeader !== null));
+        const status = response.status === 401 ? 401 : rateLimited ? 429 : 502;
+        throw new GitHubRequestError(
+          `GitHub search failed with status ${response.status} for "${alias}".`,
+          status,
+          retryAfterSeconds,
+        );
+      }
+      return (await response.json()) as { items?: Array<{ id: number; login: string }> };
+    }, deps.sleep);
     const items = body.items ?? [];
     for (const item of items) results.push({ id: item.id, login: item.login });
     if (items.length < SEARCH_PAGE_SIZE) break;
@@ -111,7 +159,7 @@ export interface HistoryDeps {
   now?: () => Date;
 }
 
-const HISTORY_CHUNK = 8;
+const HISTORY_CHUNK = 4;
 const RATE_LIMIT_FLOOR = 200;
 const RESET_MARGIN_MS = 5_000;
 
@@ -119,7 +167,7 @@ interface RawHistory {
   rateLimit: { remaining: number; resetAt: string };
   user:
     | ({
-        databaseId: number;
+        databaseId: number | null;
         login: string;
         name: string | null;
         avatarUrl: string;
@@ -176,10 +224,14 @@ export async function fetchUserHistory(
   const currentYear = now.getUTCFullYear();
 
   const run = async (years: number[]): Promise<RawHistory> => {
-    const data = await fetchGraphQL<RawHistory>(authorization, historyQuery(years, now), { login });
+    const data = await withRetry(
+      () =>
+        fetchGraphQL<RawHistory>(authorization, historyQuery(years, now), { login }, { timeoutMs: 40_000 }),
+      sleep,
+    );
     if (data.rateLimit.remaining < RATE_LIMIT_FLOOR) {
       const wait = Date.parse(data.rateLimit.resetAt) - clock().getTime() + RESET_MARGIN_MS;
-      if (wait > 0) await sleep(wait);
+      if (wait > 0) await sleep(Math.min(wait, 65 * 60_000));
     }
     return data;
   };
@@ -190,6 +242,7 @@ export async function fetchUserHistory(
       const raw = data.user?.[`y${year}`] as RawYear | undefined;
       for (const week of raw?.contributionCalendar.weeks ?? []) {
         for (const day of week.contributionDays) {
+          if (!day.date.startsWith(`${year}-`)) continue;
           days.push({ date: day.date, count: day.contributionCount });
         }
       }
@@ -205,6 +258,8 @@ export async function fetchUserHistory(
     throw error;
   }
   if (!first.user) return null;
+  const databaseId = first.user.databaseId;
+  if (databaseId === null || !Number.isInteger(databaseId) || databaseId <= 0) return null;
   collect(first, firstYears);
 
   if (fromYear === null) {
@@ -220,7 +275,7 @@ export async function fetchUserHistory(
   const rolled = rollUpMonths([...unique.values()]);
   const byYear = new Map(rolled.map((year) => [year.year, year]));
   return {
-    id: first.user.databaseId,
+    id: databaseId,
     login: first.user.login,
     name: first.user.name,
     avatarUrl: first.user.avatarUrl,

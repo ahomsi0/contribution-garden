@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { GitHubRequestError } from "@/lib/github/graphql";
 import { searchCandidates } from "@/lib/rankings/github-source";
 
 function fakeSearch(byAlias: Record<string, Array<{ id: number; login: string }>>) {
@@ -52,4 +53,51 @@ test("fails loudly on an auth error", async () => {
     }),
     /GitHub search failed with status 401/,
   );
+});
+
+test("retries after a secondary rate limit, honouring retry-after", async () => {
+  let calls = 0;
+  const waits: number[] = [];
+  const users = await searchCandidates(["A"], 10, {
+    token: "t",
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return new Response("{}", { status: 403, headers: { "retry-after": "30" } });
+      return Response.json({ items: [{ id: 1, login: "a" }] });
+    },
+    sleep: async (ms) => {
+      waits.push(ms);
+    },
+  });
+  assert.ok(waits.includes(30_000));
+  assert.deepEqual(users, [{ id: 1, login: "a" }]);
+});
+
+test("does not retry a 401 and raises a typed error", async () => {
+  let calls = 0;
+  await assert.rejects(
+    searchCandidates(["A"], 10, {
+      token: "bad",
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response("{}", { status: 401 });
+      },
+      sleep: async () => {},
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof GitHubRequestError);
+      assert.equal(error.status, 401);
+      assert.match(error.message, /GitHub search failed with status 401/);
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+});
+
+test("fetches a second page when the first is full", async () => {
+  const all = Array.from({ length: 150 }, (_, index) => ({ id: index + 1, login: `u${index + 1}` }));
+  const { calls, fetchImpl } = fakeSearch({ A: all });
+  const users = await searchCandidates(["A"], 150, { token: "t", fetchImpl, sleep: async () => {} });
+  assert.equal(calls.length, 2);
+  assert.equal(users.length, 150);
 });
