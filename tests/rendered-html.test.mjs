@@ -881,6 +881,7 @@ test("returns 404 for an unknown country", async () => {
     context,
   );
   assert.equal(response.status, 404);
+  assert.match(await response.text(), /Nothing growing here/);
 });
 
 test("redirects legacy ?user= links to /u/<login>", async () => {
